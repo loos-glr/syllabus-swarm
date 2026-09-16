@@ -173,8 +173,13 @@ def _find_syllabus_in_dir(resume_dir: Path) -> Path:
     if not resume_dir.exists():
         raise FileNotFoundError(f"Resume directory not found: {resume_dir}")
 
+    if not resume_dir.is_dir():
+        raise FileNotFoundError(
+            f"Resume path is not a directory (expected a run directory): {resume_dir}"
+        )
+
     syllabus_subdir = resume_dir / "syllabus"
-    if not syllabus_subdir.exists():
+    if not syllabus_subdir.is_dir():
         raise FileNotFoundError(
             f"No 'syllabus/' subdirectory found in resume directory: {resume_dir}"
         )
@@ -374,12 +379,18 @@ def run_syllabus_crew(
                 print(f"      ({len(syllabus_raw):,} characters)")
 
         except Exception as exc:
-            syllabus_error = str(exc)
-            # Create a fallback path so the rest of the function has
-            # something to work with.
-            syllabus_path = OUTPUT_ROOT / "resume_failed" / f"{safe_name}.md"
-            if verbose:
-                print(f"  ❌  Failed to load syllabus from resume dir: {exc}", file=sys.stderr)
+            # Fail loudly instead of fabricating a broken fallback path.  The
+            # previous approach (``output/resume_failed/<name>.md``) did not
+            # create its parent directory, so the later ``shutil.copy2`` would
+            # crash with an unrelated ``FileNotFoundError``.  Surface the real
+            # cause with actionable guidance instead.
+            raise RuntimeError(
+                "Failed to load syllabus from resume directory "
+                f"{resume_path}: {exc}\n"
+                "  → Pass the run *directory* (e.g. output/<run_id>/) to "
+                "--resume-from, not a file such as intake_session.json.  Use "
+                "--load-session to reuse a saved intake session."
+            ) from exc
 
         # When resuming, we still create a fresh run directory for the
         # labs output (so each resume produces its own timestamped output).

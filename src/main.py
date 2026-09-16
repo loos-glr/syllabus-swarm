@@ -213,6 +213,67 @@ def _validate_name(name: str) -> str:
     return name
 
 
+def _validate_resume_dir(resume_dir: str) -> Path:
+    """Validate a ``--resume-from`` path and return it as a resolved ``Path``.
+
+    ``--resume-from`` must point at a previous **run directory** (e.g.
+    ``output/2026-08-27_091745_Javascript_OOP``) containing a ``syllabus/``
+    subdirectory with at least one ``.md`` file.  Failing fast here — before
+    the crew is built — prevents the confusing cascade that otherwise occurs
+    when a file (such as ``intake_session.json``) is passed by mistake.
+
+    Parameters
+    ----------
+    resume_dir : str
+        The value of the ``--resume-from`` CLI flag.
+
+    Returns
+    -------
+    Path
+        The resolved, validated run directory.
+
+    Raises
+    ------
+    SystemExit
+        If the path does not exist, is not a directory, or lacks a usable
+        ``syllabus/`` subdirectory.
+    """
+    resume_path = Path(resume_dir)
+    if not resume_path.is_absolute():
+        resume_path = _PROJECT_ROOT / resume_path
+
+    if not resume_path.exists():
+        print(
+            f"❌ --resume-from directory not found: {resume_path}",
+            file=sys.stderr,
+        )
+        sys.exit(1)
+
+    if not resume_path.is_dir():
+        hint = ""
+        if resume_path.suffix.lower() == ".json":
+            hint = (
+                "\n   → This looks like a session file. Use --load-session for a "
+                "saved intake session, or pass the run *directory* (e.g. "
+                "output/<run_id>/) for --resume-from."
+            )
+        print(
+            f"❌ --resume-from must be a run directory, not a file: {resume_path}{hint}",
+            file=sys.stderr,
+        )
+        sys.exit(1)
+
+    syllabus_subdir = resume_path / "syllabus"
+    if not syllabus_subdir.is_dir() or not list(syllabus_subdir.glob("*.md")):
+        print(
+            f"❌ No 'syllabus/' subdirectory with a .md file found in run directory: {resume_path}",
+            file=sys.stderr,
+        )
+        sys.exit(1)
+
+    return resume_path
+
+
 # ---------------------------------------------------------------------------
 # Profile loading
 # ---------------------------------------------------------------------------
@@ -1008,6 +1069,10 @@ def main(argv: list[str] | None = None) -> None:
             file=sys.stderr,
         )
         sys.exit(1)
+
+    # --- 1b. Validate --resume-from before any heavy work ------------------
+    if resume_dir:
+        resume_dir = str(_validate_resume_dir(resume_dir))
 
     # --- 2. Load profile if provided --------------------------------------
     profile_data: dict | None = None

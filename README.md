@@ -228,6 +228,39 @@ Both models are defined in `src/models.py` and are the canonical source of struc
 
 ---
 
+## Troubleshooting
+
+### "cannot import name 'UTC' from 'datetime'" / "No module named 'crewai'"
+
+This means an **older Python (3.9) is being used**. The project requires Python 3.12+.
+
+- Make sure the project virtualenv is active: `source .venv/bin/activate`.
+- If `python --version` still reports an older version *after* activating, the
+  venv's `python3` symlink may point at a system interpreter. Recreate it:
+
+  ```bash
+  rm -f .venv/bin/python .venv/bin/python3 .venv/bin/python3.9 .venv/bin/pip3.9
+  python3.12 -m venv .venv
+  source .venv/bin/activate
+  ```
+
+- Or invoke the correct interpreter directly: `python3.12 src/main.py`.
+
+### `--resume-from` fails with "No 'syllabus/' subdirectory found"
+
+`--resume-from` expects a previous **run directory** (e.g.
+`output/2026-08-22_153000_ML_Basics`), **not** the `intake_session.json` file.
+
+```bash
+# Correct — pass the run directory
+python src/main.py "ML Basics" --resume-from output/2026-08-22_153000_ML_Basics
+
+# To reuse a saved intake session instead, use --load-session
+python src/main.py "ML Basics" --load-session output/2026-08-22_153000_ML_Basics/intake_session.json
+```
+
+---
+
 ## License
 
 MIT
