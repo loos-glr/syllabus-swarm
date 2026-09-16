@@ -36,6 +36,19 @@ from __future__ import annotations
 import argparse
 import json
 import sys
+
+# The project targets Python 3.12+ and relies on stdlib features that did not
+# exist in earlier releases (e.g. ``datetime.UTC``, PEP 604 unions).  Fail fast
+# with a clear message instead of an opaque ``ImportError`` when an older
+# interpreter is used.  This check MUST precede the ``from datetime import UTC``
+# import below, otherwise Python 3.9 would raise that ImportError first.
+if sys.version_info < (3, 12):
+    raise SystemExit(
+        "syllabus-swarm requires Python 3.12+ "
+        f"(running {'.'.join(map(str, sys.version_info[:3]))}).\n"
+        "Activate the project .venv or run with `python3.12`."
+    )
+
 from datetime import UTC, datetime
 from pathlib import Path
 

@@ -32,6 +32,7 @@ ignore = [
     "B007",  # unused loop variable (intentional in some cases)
     "N802",  # function name should be lowercase (pytest method names)
     "C408",  # unnecessary dict() call (explicit is clearer)
+    "UP036", # version block is intentional — catches `python3 src/main.py` under <3.12
 ]
 
 [tool.ruff.lint.isort]

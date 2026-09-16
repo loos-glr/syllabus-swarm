@@ -7,6 +7,12 @@
 
 .PHONY: help check-python setup install verify clean
 
+# Canonical interpreter for the project.  The Makefile always uses the venv
+# (or a fully-qualified ``python3.12``) rather than a bare ``python``/``python3``,
+# which can resolve to an older system interpreter (e.g. macOS CommandLineTools
+# Python 3.9) and cause opaque import errors.
+PYTHON ?= python3.12
+
 ## help: list available targets
 help:
 	@echo "Available targets:"
@@ -18,19 +24,19 @@ help:
 
 ## check-python: fail fast if Python 3.12+ is not available
 check-python:
-	@python3 -c 'import sys; sys.exit(0 if (3, 12) <= sys.version_info < (4,) else 1)' \
-		|| (echo "ERROR: Python 3.12+ is required (found: $$(python3 --version))."; \
+	@$(PYTHON) -c 'import sys; sys.exit(0 if (3, 12) <= sys.version_info < (4,) else 1)' \
+		|| (echo "ERROR: Python 3.12+ is required (found: $$($(PYTHON) --version))."; \
 		    echo "       Install it via:  brew install python@3.12"; \
 		    echo "       or:             brew install pyenv && pyenv install 3.12"; \
 		    exit 1)
-	@echo "Python OK: $$(python3 --version)"
+	@echo "Python OK: $$($(PYTHON) --version)"
 
 ## setup: create a fresh virtual environment and install dependencies
 setup: check-python
 	@echo "Creating virtual environment with Python 3.12+..."
-	python3 -m venv .venv
+	$(PYTHON) -m venv .venv
 	@echo "Installing dependencies..."
-	.venv/bin/pip install -r requirements.txt
+	.venv/bin/python -m pip install -r requirements.txt
 	@echo ""
 	@echo "Done. Activate the environment with:"
 	@echo "  source .venv/bin/activate"
@@ -39,11 +45,11 @@ setup: check-python
 
 ## install: install/upgrade dependencies in the current environment
 install:
-	pip install --upgrade -r requirements.txt
+	.venv/bin/python -m pip install --upgrade -r requirements.txt
 
 ## verify: smoke-test the LLM factory connection
 verify:
-	python -m src.llm_factory
+	.venv/bin/python -m src.llm_factory
 
 ## clean: remove virtual environment and caches
 clean:

@@ -32,6 +32,17 @@ Usage
 from __future__ import annotations
 
 import os
+import sys
+
+# Fail fast with a clear message instead of a confusing ``ModuleNotFoundError``
+# (or an ``ImportError`` from ``datetime.UTC``) when an older interpreter is
+# used.  The project requires Python 3.12+.
+if sys.version_info < (3, 12):
+    raise SystemExit(
+        "syllabus-swarm requires Python 3.12+ "
+        f"(running {'.'.join(map(str, sys.version_info[:3]))}).\n"
+        "Activate the project .venv or run with `python3.12`."
+    )
 
 from crewai import LLM
 from dotenv import load_dotenv
