@@ -1,0 +1,75 @@
+# =============================================================================
+# Cohort Profile: MINOR2 Immersive Design
+# =============================================================================
+
+# ---------------------------------------------------------------------------
+# TOP-LEVEL METADATA — REQUIRED
+# ---------------------------------------------------------------------------
+
+profile:
+  name: "MINOR2 Immersive Design (WebXR & Unity) — BOL Pathway (Year 2)"
+  description: >
+    Creative Software Developer (MBO 4) studenten in hun tweede jaar. Ze hebben een 
+    sterke basis in HTML, CSS, JavaScript (DOM, OOP, arrays, events) en PHP (CRUD).
+    Deze 32-weken durende minor (Keuzedeel K0781: Virtual en augmented reality) 
+    introduceert ze in ruimtelijk denken, 3D-interfaces en de C# syntax via Unity. 
+    Om de cognitieve belasting te managen start het programma met WebXR (HTML/JS) 
+    en een multidisciplinair cross-over project met Physical Digital studenten (die 
+    fysieke controllers bouwen voor WebXR). In de tweede helft wordt de overstap naar 
+    Unity gemaakt voor de realisatie van een klantcasus. Het onderwijs is 100% 
+    studio-gestuurd (geen zelfstudie).
+
+# ---------------------------------------------------------------------------
+# COHORT DEMOGRAPHICS
+# ---------------------------------------------------------------------------
+
+year_level: 2
+student_pathway: "BOL"
+bpv_readiness: "bpv-ready"
+
+# ---------------------------------------------------------------------------
+# TECH STACK BASELINE
+# ---------------------------------------------------------------------------
+
+tech_stack:
+  primary_language: "JavaScript / C#"
+  framework: "A-Frame / Unity"
+  frontend: "HTML5 / WebXR"
+  database: "N/A"
+  version_control: "Git (GitHub Classroom)"
+  editor: "VS Code / Unity Editor"
+  
+  testing:
+    framework: "User Testing / Zintuigelijke Validatie (Testplan volgens KD)"
+    coverage_target: "N/A"
+
+  ci_cd: "N/A"
+  containerisation: "N/A"
+  deployment: "Local builds naar Meta Quest 2 / Webhosting voor WebXR"
+
+# ---------------------------------------------------------------------------
+# KERNTAKEN EMPHASIS
+# ---------------------------------------------------------------------------
+
+kerntaken_emphasis:
+  P1-K1: "moderate"   # Planning — PvE opstellen, plannen ontwerpproces
+  P2-K1: "heavy"      # Designing — VR/AR ontwerp, doelgroeponderzoek, presenteren aan klant
+  P3-K1: "heavy"      # Building — WebXR/Unity realisatie, fysieke interface integratie
+  P4-K1: "moderate"   # Testing — Zintuigelijke testplannen uitvoeren met hardware
+
+# ---------------------------------------------------------------------------
+# STATIC CONSTRAINTS
+# ---------------------------------------------------------------------------
+
+grading_scale: "OVG"
+hardware_constraints: "BYOD laptop (Windows/macOS) capabel voor Unity. Meta Quest 2 en Cardboards worden gefaciliteerd door GLR."
+
+# ---------------------------------------------------------------------------
+# ASSESSMENT PLAN
+# ---------------------------------------------------------------------------
+
+assessment:
+  practical_exams: 1
+  portfolio_items: 2
+  proeve_preparation: true
+  code_reviews_per_semester: 2

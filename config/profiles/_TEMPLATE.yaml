@@ -1,0 +1,186 @@
+# =============================================================================
+# _TEMPLATE.yaml — Cohort Profile Template for Syllabus Swarm
+# =============================================================================
+#
+# What is a cohort profile?
+# ─────────────────────────
+# A cohort profile is a YAML file that pre-configures a course generation run
+# for a specific student group ("cohort").  It captures *institution-wide*
+# constants (pathway, year, grading scale, hardware) AND *cohort-specific*
+# preferences (tech stack, kerntaken emphasis, assessment plan) so the
+# Intake Specialist can skip questions that are already decided.
+#
+# How to use this template
+# ────────────────────────
+# 1. Copy this file, e.g.:
+#      cp config/profiles/_TEMPLATE.yaml config/profiles/my_cohort.yaml
+# 2. Fill in the fields marked ``REQUIRED``.  Delete optional sections you
+#    don't need — the loader is permissive (missing keys are simply ignored).
+# 3. Run the generator with:
+#      python src/main.py "Your Course Name" --profile config/profiles/my_cohort.yaml
+#
+# What happens during a run?
+# ──────────────────────────
+# * ``year_level``, ``student_pathway``, ``grading_scale``, and
+#   ``hardware_constraints`` are injected directly into the
+#   CourseSpecification model → the Intake Specialist SKIPS those questions.
+# * ``primary_language`` from ``tech_stack`` is also injected → no
+#   language-detection guesswork downstream.
+# * Everything else (tech stack details, kerntaken emphasis, assessment
+#   plan, BPV readiness) is serialized into the ``course_context`` string
+#   block so all downstream agents see it.
+# =============================================================================
+
+# ---------------------------------------------------------------------------
+# TOP-LEVEL METADATA — REQUIRED
+# ---------------------------------------------------------------------------
+
+profile:
+  # A short, human-readable label for this cohort.
+  # Appears in the CLI output: "📋  Loaded cohort profile: <name>"
+  name: "REQUIRED — e.g., Python/Flask — BOL Pathway (Year 2)"
+
+  # A paragraph describing the cohort's background, prior knowledge, and
+  # focus for this course.  Injected into ``course_context``.
+  description: >
+    REQUIRED — Describe the student group, their prior courses, and what
+    this particular course should achieve.  This text helps the Intake
+    Specialist and all downstream agents understand the audience.
+
+# ---------------------------------------------------------------------------
+# COHORT DEMOGRAPHICS
+# ---------------------------------------------------------------------------
+
+# Student year level.  Sets the complexity bar for labs and theory.
+#   • 1 = Foundation Year (fundamentals, tooling, introductory projects)
+#   • 2 = Specialisation Year (framework depth, DB design, testing, BPV prep)
+#   • 3 = Proeve Year (final exam project, portfolio, internship)
+# Injected into CourseSpecification → Intake Specialist skips this.
+year_level: 2
+
+# Student pathway (Dutch MBO leerweg).
+#   • "BOL" = school-based (~60 % school, ~40 % BPV internship)
+#   • "BBL" = work-based   (~20 % school, ~80 % BPV work)
+# Injected into CourseSpecification → Intake Specialist skips this.
+student_pathway: "BOL"
+
+# BPV (internship) readiness of the cohort.
+#   • "pre-bpv"   — students haven't started their internship yet
+#   • "bpv-ready" — students are about to or just started their internship
+#   • "post-bpv"  — students have completed their internship
+# This is serialized into ``course_context`` (not injected into the model)
+# so agents can adjust syllabi accordingly.
+bpv_readiness: "bpv-ready"
+
+# ---------------------------------------------------------------------------
+# TECH STACK BASELINE
+# ---------------------------------------------------------------------------
+# Everything under ``tech_stack`` is serialized into ``course_context``.
+# ``primary_language`` is ALSO injected into ``CourseSpecification.primary_language``
+# so downstream task routing (labs, etc.) picks it up automatically.
+# ---------------------------------------------------------------------------
+
+tech_stack:
+  # The main programming language for labs and examples.  Injected into
+  # CourseSpecification → the Lab Developer always picks the right language.
+  primary_language: "Python"
+
+  # The primary framework or runtime (e.g. "Flask", "Laravel 11",
+  # "Node.js", ".NET 8").  Write "N/A" if the course is agnostic.
+  framework: "Flask"
+
+  # Front-end technology expected / used in the course.
+  # Examples: "Jinja2 + Bootstrap", "React", "Blade + Tailwind", "None (backend focus)".
+  frontend: "Jinja2 + Bootstrap"
+
+  # Database technology.
+  # Examples: "MySQL / MariaDB", "PostgreSQL", "MongoDB", "SQLite", "N/A".
+  database: "PostgreSQL"
+
+  # Version control tooling.
+  # Typically "Git (GitHub Classroom)" or "Git (GitHub with Branching Strategies)".
+  version_control: "Git (GitHub Classroom)"
+
+  # Code editor or IDE students are expected to use.
+  # Almost always "VS Code" in school contexts.
+  editor: "VS Code"
+
+  # Testing section — see below for nested fields.
+  testing:
+    # Test framework (e.g. "pytest", "Jest (ts-jest)", "Pest", "JUnit").
+    framework: "pytest"
+    # Targeted code coverage as string (e.g. "80%", "70%", "60%").
+    coverage_target: "80%"
+
+  # CI/CD pipeline.  "GitHub Actions" is the school default.
+  ci_cd: "GitHub Actions"
+
+  # Containerisation (Docker / Podman / Kubernetes / None).
+  containerisation: "Docker"
+
+  # Deployment target (e.g. "Render / Railway free tier", "school-managed Plesk server", "None").
+  deployment: "Render / Railway (free tier)"
+
+  # Optional — project-management tooling (e.g. "GitHub Projects", "Jira").
+  # Only include this key when the course explicitly teaches PM tooling.
+  # project_management: "GitHub Projects / GitHub Issues"
+
+# ---------------------------------------------------------------------------
+# KERNTAKEN EMPHASIS
+# ---------------------------------------------------------------------------
+# The Dutch SBB Kwalificatiedossier (crebonummer 25604) defines four
+# "kerntaken" (core tasks) every Software Developer MBO 4 student must
+# master.  Use this section to tell the agents which kerntaken this
+# course emphasises (so the syllabus workload aligns to the right mix).
+#
+# Allowed values per kerntaak:
+#   • "heavy"   — this is a primary focus of the course
+#   • "moderate" — covered, but not the main focus
+#   • "light"   — touched on only briefly
+#   • "none"    — explicitly NOT covered (delegated to another course)
+# ---------------------------------------------------------------------------
+
+kerntaken_emphasis:
+  P1-K1: "moderate"   # Planning — requirements, sprint planning, estimation
+  P2-K1: "moderate"   # Designing — architecture, data modelling, API design
+  P3-K1: "heavy"      # Building — coding, debugging, version control
+  P4-K1: "heavy"      # Testing — unit/integration tests, QA processes
+
+# ---------------------------------------------------------------------------
+# STATIC CONSTRAINTS (injected into CourseSpecification)
+# ---------------------------------------------------------------------------
+# These two keys are injected directly into the CourseSpecification
+# model fields, so the Intake Specialist SKIPS them during the interview.
+# They also appear in the profile context so all agents can read them.
+# ---------------------------------------------------------------------------
+
+# Grading scale.  "OVG" is the standard for Dutch MBO:
+#   O = Onvoldoende (< 5.5)  |  V = Voldoende (5.5–7.5)  |  G = Goed (> 7.5)
+# Other valid values: "1-10" (Dutch decimal), "A-F" (letter grades).
+grading_scale: "OVG"
+
+# Hardware / device description for the cohort.  Tells agents what tooling
+# is viable (e.g. Docker may not work on school-managed thin clients).
+hardware_constraints: "BYOD laptop (Windows/macOS/Linux), 8 GB+ RAM, Chrome-based browsers preferred."
+
+# ---------------------------------------------------------------------------
+# ASSESSMENT PLAN
+# ---------------------------------------------------------------------------
+# Describes the summative assessment structure for this course.
+# Serialized into ``course_context`` — agents use this to align lab
+# complexity, rubric criteria, and module pacing with the assessment load.
+# ---------------------------------------------------------------------------
+
+assessment:
+  # Number of practical (coding / hands-on) exams during the course.
+  practical_exams: 2
+
+  # Number of portfolio items (e.g. projects, code reviews, retrospectives).
+  portfolio_items: 4
+
+  # Whether this course prepares students for the Proeve van Bekwaamheid
+  # (final qualifying exam).  True → agents include proeve-style tasks.
+  proeve_preparation: true
+
+  # Number of formal code review sessions per semester.
+  code_reviews_per_semester: 3
