@@ -1,0 +1,41 @@
+# =============================================================================
+# Cohort Profile: VMBO Orientatie - Mega Villains Inc.
+# =============================================================================
+
+profile:
+  name: "VMBO Orientatie - Mega Villains Inc. - Beginner"
+  description: >
+    Een 10-weekse oriëntatieworkshop voor VMBO studenten (BB, KB, GL, Havo) op beginnersniveau[cite: 1]. De leerlingen ontwerpen en bouwen een webshop voor schurken action figures[cite: 1]. Het doel is kennismaken met applicatieontwikkeling via Figma, HTML en Javascript, inclusief plan van aanpak, peer-testen en evaluatie[cite: 1].
+
+year_level: 1
+student_pathway: "BOL"
+bpv_readiness: "pre-bpv"
+
+tech_stack:
+  primary_language: "HTML en Javascript"
+  framework: "N/A"
+  frontend: "HTML, CSS, Javascript"
+  database: "N/A"
+  version_control: "Lokaal met mappenstructuur op USB-stick[cite: 1]"
+  editor: "Software om HTML en Javascript mee te verwerken[cite: 1]"
+  testing:
+    framework: "Handmatig via peer-testing en testformulier[cite: 1]"
+    coverage_target: "N/A"
+  ci_cd: "N/A"
+  containerisation: "N/A"
+  deployment: "N/A"
+
+kerntaken_emphasis:
+  P1-K1: "moderate"   # Plan van aanpak, eisen klant, flowchart[cite: 1]
+  P2-K1: "heavy"      # Figma ontwerpen, moodboard, wireframes, persona[cite: 1]
+  P3-K1: "moderate"   # Basis HTML en Javascript oefeningen[cite: 1]
+  P4-K1: "moderate"   # Testrapport schrijven door een klasgenoot (peer-testing)[cite: 1]
+
+grading_scale: "1-10" # SE1 en SE2 puntenberekening leidt tot een eindcijfer[cite: 1]
+hardware_constraints: "Computer met internetverbinding en een USB-stick[cite: 1]."
+
+assessment:
+  practical_exams: 0
+  portfolio_items: 6  # Plan van aanpak, app in Figma, HTML/JS oefeningen, testverslag, handleiding, evaluatieverslag[cite: 1]
+  proeve_preparation: false
+  code_reviews_per_semester: 1
