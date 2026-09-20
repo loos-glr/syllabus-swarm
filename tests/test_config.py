@@ -5,6 +5,11 @@ test_config.py — Tests for the Config System & --profile Flag (Issue #8)
 Validates YAML parsing, schema validation, profile injection into
 CourseSpecification, CLI flag handling, and Intake Specialist skip
 behaviour for pre-populated fields.
+
+.. rubric:: Issue #16 — Layer 1 Architecture Enforcement
+
+All config-loading functions MUST be importable from a Layer 1 module
+(``src.config_loader``), **not** from ``src.main`` (Layer 4).
 """
 
 from __future__ import annotations
@@ -21,6 +26,83 @@ from src.main import (
     _inject_profile,
     _load_profile,
 )
+
+# ═══════════════════════════════════════════════════════════════════════
+# Issue #16 RED PHASE — Architecture Enforcement Tests
+# These tests MUST fail until src.config_loader exists and is Layer 1.
+# ═══════════════════════════════════════════════════════════════════════
+
+
+class TestLayer1ConfigLoaderExists:
+    """Verify that config-loading primitives live in Layer 1."""
+
+    def test_load_profile_importable_from_config_loader(self) -> None:
+        """``load_profile`` MUST be importable from src.config_loader (Layer 1)."""
+        from src.config_loader import load_profile
+
+        assert callable(load_profile)
+
+    def test_inject_profile_importable_from_config_loader(self) -> None:
+        """``inject_profile`` MUST be importable from src.config_loader (Layer 1)."""
+        from src.config_loader import inject_profile
+
+        assert callable(inject_profile)
+
+    def test_get_pre_populated_fields_importable_from_config_loader(self) -> None:
+        """``get_pre_populated_fields`` MUST be importable from src.config_loader (Layer 1)."""
+        from src.config_loader import get_pre_populated_fields
+
+        assert callable(get_pre_populated_fields)
+
+    def test_config_loader_has_no_layer4_imports(self) -> None:
+        """src.config_loader MUST NOT import from src.main (Layer 4)."""
+        import ast
+        from pathlib import Path
+
+        config_loader_path = (
+            Path(__file__).resolve().parent.parent
+            / "src" / "config_loader.py"
+        )
+        assert config_loader_path.exists(), (
+            "src/config_loader.py (Layer 1) must exist"
+        )
+        source = config_loader_path.read_text()
+        tree = ast.parse(source)
+        layer4_imports: list[str] = []
+        for node in ast.walk(tree):
+            if isinstance(node, ast.Import):
+                for alias in node.names:
+                    if "main" in alias.name.lower():
+                        layer4_imports.append(alias.name)
+            elif isinstance(node, ast.ImportFrom):
+                if node.module and "src.main" in node.module:
+                    layer4_imports.append(node.module)
+        assert not layer4_imports, (
+            f"src/config_loader.py (Layer 1) MUST NOT import from "
+            f"Layer 4 (src.main). Found: {layer4_imports}"
+        )
+
+    def test_course_specification_importable_from_config_loader(self) -> None:
+        """CourseSpecification model MUST be re-exportable from config_loader."""
+        from src.config_loader import CourseSpecification
+
+        spec = CourseSpecification(
+            course_context="test",
+            primary_language="Python",
+            grading_scale="OVG",
+        )
+        assert spec.grading_scale == "OVG"
+
+    def test_cohort_profile_pydantic_model_exists(self) -> None:
+        """src.config_loader MUST expose a CohortProfile Pydantic model."""
+        from src.config_loader import CohortProfile
+
+        # Verify it's a Pydantic BaseModel
+        from pydantic import BaseModel
+
+        assert issubclass(CohortProfile, BaseModel), (
+            "CohortProfile must be a Pydantic BaseModel"
+        )
 
 # ---------------------------------------------------------------------------
 # Paths to the real config fixtures shipped with the project
