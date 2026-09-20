@@ -72,9 +72,7 @@ class TestModelAgnosticBaseUrl:
         """src/llm_factory.py uses env var for base URL (fallbacks allowed)."""
         from pathlib import Path
 
-        factory_path = (
-            Path(__file__).resolve().parent.parent / "src" / "llm_factory.py"
-        )
+        factory_path = Path(__file__).resolve().parent.parent / "src" / "llm_factory.py"
         source = factory_path.read_text()
 
         # The fallback default inside os.getenv() is acceptable.
@@ -101,8 +99,7 @@ class TestModelAgnosticBaseUrl:
         ):
             config = get_effective_config(CURRICULUM_ARCHITECT)
             assert config["base_url"] == custom_url, (
-                f"BASE_URL env var not respected. "
-                f"Expected {custom_url}, got {config['base_url']}"
+                f"BASE_URL env var not respected. Expected {custom_url}, got {config['base_url']}"
             )
 
     def test_api_key_env_var_fallback_works(self) -> None:
@@ -116,6 +113,7 @@ class TestModelAgnosticBaseUrl:
             assert config["api_key_status"] == "set", (
                 "API_KEY env var should be recognised as an auth credential"
             )
+
 
 def _env(*extra: dict[str, str]) -> dict[str, str]:
     """Merge *extra* dicts on top of the base env (API key only)."""

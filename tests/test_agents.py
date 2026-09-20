@@ -924,6 +924,11 @@ class TestCreateEducationDirector:
             return_value=mock_llm,
         ):
             agent = create_education_director()
+            assert (
+                "feasibility" in agent.goal.lower()
+                or "audit" in agent.goal.lower()
+                or "blueprint" in agent.goal.lower()
+            )
 
 
 # ===================================================================

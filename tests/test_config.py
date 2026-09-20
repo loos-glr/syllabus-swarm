@@ -95,10 +95,10 @@ class TestLayer1ConfigLoaderExists:
 
     def test_cohort_profile_pydantic_model_exists(self) -> None:
         """src.config_loader MUST expose a CohortProfile Pydantic model."""
-        from src.config_loader import CohortProfile
-
         # Verify it's a Pydantic BaseModel
         from pydantic import BaseModel
+
+        from src.config_loader import CohortProfile
 
         assert issubclass(CohortProfile, BaseModel), (
             "CohortProfile must be a Pydantic BaseModel"

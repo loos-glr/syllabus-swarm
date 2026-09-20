@@ -102,6 +102,8 @@ class TestCourseSpecification:
         )
         assert "Node.js" in spec.course_context
         assert "BOL" in spec.course_context
+
+
 # ═══════════════════════════════════════════════════════════════════════
 # Issue #7 RED PHASE — Interactive CLI Feedback Tests
 # These tests MUST fail until prompt_for_feedback is implemented.

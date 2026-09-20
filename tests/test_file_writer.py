@@ -519,4 +519,3 @@ class TestRemotionExport:
 
         with pytest.raises(TypeError):
             write_remotion_manifest("not a manifest")  # type: ignore[arg-type]
-            assert str(e) == "custom error text"

@@ -2,10 +2,6 @@
 
 from __future__ import annotations
 
-from unittest.mock import MagicMock, patch
-
-import pytest
-
 from src.crews.syllabus_crew import SwarmState
 from src.models import ModalityDecision, ModalityType
 
