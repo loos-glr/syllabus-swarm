@@ -36,15 +36,18 @@ python3.12 -m src.llm_factory
 
 ## Architecture
 
-syllabus-swarm is built on six specialized AI agents, each assigned a model optimized for its specific role:
+syllabus-swarm is built on nine specialized AI agents, each assigned a model optimized for its specific role:
 
 | Agent | Role | Default Model | Rationale |
 |---|---|---|---|
 | **Intake Specialist** | Interviews the user to extract technical and pedagogical requirements mapped to Dutch SBB Kwalificatiedossiers | `deepseek/deepseek-v4-pro` | Strong reasoning for synthesising rich course context from user answers, with deep knowledge of MBO4 vocational education pathways (BOL/BBL) and kerntaken (P1-K1 through P4-K1). |
 | **Curriculum Architect** | Designs syllabi using the Humanics framework (data literacy, technological literacy, human literacy) + experiential learning | `deepseek/deepseek-v4-pro` | State-of-the-art multi-step reasoning for crafting logically coherent, pedagogically sound syllabi that span weeks of content across three integrated literacies. |
+| **Education Director** | Audits syllabi for time-budget math, realistic MBO4 workloads, and scheduling contradictions before content generation proceeds | `deepseek/deepseek-v4-pro` | Structured analysis and precise feasibility calculations to ensure every syllabus is deliverable within real classroom constraints. |
 | **Theory Instructor** | Transforms abstract syllabus concepts into interactive learning artifacts (HTML/JS visualizations, pausing terminal scripts, Mermaid.js diagrams) | `deepseek/deepseek-v4-pro` | Strong writing + code generation for producing self-contained, runnable interactive artifacts that vocational students can engage with before starting hands-on labs. |
 | **Lab & Project Developer** | Generates tiered hands-on coding exercises with starter code and fully-commented solution keys | `openrouter/qwen/qwen3-coder` | Purpose-built for programming tasks — produces cleaner starter code, more idiomatic solutions, and fewer hallucinated API calls than general-purpose models. |
 | **QA Reviewer** | Reviews all generated labs for technical correctness (syntax, imports, runnability) and MBO4 didactic appropriateness | `openrouter/qwen/qwen3-coder` | Purpose-built for code understanding and review — catches syntax errors, missing imports, hallucinated variables, and didactic issues before they reach students. |
+| **Media Strategist** | Analyzes curriculum module complexity and routes each module to the optimal instructional modality (text, interactive web, terminal CLI, or Video-as-Code) | `deepseek/deepseek-v4-pro` | Strong pedagogical reasoning for calibrating complexity scores and producing well-justified `ModalityDecision` outputs that drive the entire downstream generation pipeline. |
+| **Video Engineer** | Generates deterministic temporal code (React/Remotion JSX) for educational video compositions — pure structural data, no prose | `deepseek/deepseek-v4-pro` | Balances creative temporal animation design with correct, runnable TypeScript/JSX output; produces `RemotionManifest` descriptors for version-controllable video compositions. |
 | **Output Exporter** | Compiles and packages all materials into clean directory structures and a consolidated manifest | `deepseek/deepseek-v4-flash-latest` | Low-latency, low-cost completions ideal for manifest generation, file assembly, and Markdown packaging — reliability without burning reasoning-token budgets. |
 
 All models are served via **OpenRouter** (`https://openrouter.ai/api/v1`).
@@ -64,10 +67,30 @@ All models are served via **OpenRouter** (`https://openrouter.ai/api/v1`).
 |---|---|
 | Intake Specialist | `output/<run_id>/intake_session.json` (auto-saved) |
 | Curriculum Architect | `output/<run_id>/syllabus/` |
+| Education Director | `output/<run_id>/syllabus/` (blueprint audit reports) |
 | Theory Instructor | `output/<run_id>/theory/` (interactive HTML/JS, terminal scripts, Mermaid.js diagrams) |
 | Lab & Project Developer | `output/<run_id>/labs/` |
 | QA Reviewer | `output/<run_id>/labs/` (review reports and delegated fixes) |
+| Media Strategist | In-memory `ModalityDecision` (routing metadata, consumed by the swarm state machine) |
+| Video Engineer | `src/export/vac/` (deterministic `.tsx` React/Remotion compositions) |
 | Output Exporter | `output/<run_id>/README.md` (manifest), `output/<run_id>/course_graph.json` (machine-readable) |
+
+---
+
+### Modality Routing & Video-as-Code (VaC)
+
+syllabus-swarm features a **polyglot generation pipeline** that routes each curriculum module to the most effective instructional modality:
+
+| Modality | Generator | Output Format | Best For |
+|---|---|---|---|
+| `CLASSIC_READER` | Theory Instructor | Markdown / text | Syntax, terminology, reference material |
+| `INTERACTIVE_WEB` | Theory Instructor | Self-contained HTML/JS | Visual algorithms, state machines, data structures |
+| `INTERACTIVE_CLI` | Theory Instructor | Pausing terminal scripts | CLI workflows, API walkthroughs, ETL pipelines |
+| `VIDEO_AS_CODE` | Video Engineer | React/Remotion `.tsx` | Recursion, network protocols, temporal animations |
+
+The **Media Strategist** evaluates each module's pedagogical complexity and outputs a `ModalityDecision` with a calibrated complexity score (0.0–1.0) and pedagogical rationale. The swarm state machine reads this decision and routes generation to either the Theory Instructor or the Video Engineer.
+
+The **Video Engineer** produces deterministic `RemotionManifest` descriptors — pure structural data (scene sequences, timing, React component trees) — never narrative prose or pixel-based media. Compositions are exported as valid `.tsx` files to `src/export/vac/`, making them version-controllable and reproducible.
 
 ---
 
@@ -81,7 +104,7 @@ Every agent obtains its LLM through a shared factory (`src/llm_factory.py`) that
 AGENT_{ROLE}_{PROPERTY}
 ```
 
-- **`{ROLE}`** — uppercase snake_case agent identifier: `CURRICULUM_ARCHITECT`, `LAB_DEVELOPER`, `OUTPUT_EXPORTER`, `INTAKE_SPECIALIST`, `QA_REVIEWER`, `THEORY_INSTRUCTOR`
+- **`{ROLE}`** — uppercase snake_case agent identifier: `CURRICULUM_ARCHITECT`, `LAB_DEVELOPER`, `OUTPUT_EXPORTER`, `INTAKE_SPECIALIST`, `QA_REVIEWER`, `THEORY_INSTRUCTOR`, `EDUCATION_DIRECTOR`, `MEDIA_STRATEGIST`, `VIDEO_ENGINEER`
 - **`{PROPERTY}`** — `MODEL`, `TEMPERATURE`, `MAX_TOKENS`, or `TOP_P`
 
 Supported properties and their defaults:

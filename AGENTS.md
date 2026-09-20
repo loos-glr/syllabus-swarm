@@ -39,10 +39,10 @@ agent = Agent(role="...", goal="...", llm=llm, ...)
 Available role constants:
 `CURRICULUM_ARCHITECT`, `LAB_DEVELOPER`, `OUTPUT_EXPORTER`,
 `INTAKE_SPECIALIST`, `QA_REVIEWER`, `THEORY_INSTRUCTOR`,
-`EDUCATION_DIRECTOR`.
+`EDUCATION_DIRECTOR`, `MEDIA_STRATEGIST`, `VIDEO_ENGINEER`.
 
-The factory handles the 4-tier fallback chain (per-agent override →
-agent-wide default → legacy global → hardcoded sensible default) and always
+The factory handles the 3-tier fallback chain (per-agent override →
+agent-wide default → hardcoded sensible default) and always
 targets `https://openrouter.ai/api/v1`.
 
 When adding a new agent, register its role constant in `src/llm_factory.py`
@@ -64,6 +64,8 @@ writing **MUST** go through one of:
    - `write_rubric(course_name, content)` — rubric convenience helper
    - `write_lab_file(course_name, tier, variant, filename, content)` — lab
      file helper
+   - `write_remotion_manifest(manifest, *, force=False)` — VaC .tsx export
+     (Video-as-Code React/Remotion compositions)
 
 2. **`OutputExportTool`** (when writing from within a CrewAI task/tool
    context).
