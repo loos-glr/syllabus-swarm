@@ -27,7 +27,6 @@ from pydantic import BaseModel, Field
 
 from src.models import CourseSpecification
 
-
 # ---------------------------------------------------------------------------
 # Pydantic Models — Profile Validation
 # ---------------------------------------------------------------------------
@@ -46,28 +45,38 @@ class CohortProfile(BaseModel):
         description="Profile metadata: name, description.",
     )
     year_level: int | None = Field(
-        default=None, ge=1, le=3, description="Student year level (1–3).",
+        default=None,
+        ge=1,
+        le=3,
+        description="Student year level (1–3).",
     )
     student_pathway: str | None = Field(
-        default=None, description="Pathway: 'BOL' or 'BBL'.",
+        default=None,
+        description="Pathway: 'BOL' or 'BBL'.",
     )
     bpv_readiness: str | None = Field(
-        default=None, description="BPV readiness: 'pre-bpv' or 'in-bpv'.",
+        default=None,
+        description="BPV readiness: 'pre-bpv' or 'in-bpv'.",
     )
     grading_scale: str | dict | None = Field(
-        default=None, description="Grading scale, e.g. 'OVG' or a dict.",
+        default=None,
+        description="Grading scale, e.g. 'OVG' or a dict.",
     )
     hardware_constraints: str | dict | None = Field(
-        default=None, description="Hardware constraint description or dict.",
+        default=None,
+        description="Hardware constraint description or dict.",
     )
     tech_stack: dict = Field(
-        default_factory=dict, description="Technology stack configuration.",
+        default_factory=dict,
+        description="Technology stack configuration.",
     )
     kerntaken_emphasis: dict[str, str] = Field(
-        default_factory=dict, description="Kerntaken emphasis: P1-K1 through P4-K1.",
+        default_factory=dict,
+        description="Kerntaken emphasis: P1-K1 through P4-K1.",
     )
     assessment: dict = Field(
-        default_factory=dict, description="Assessment configuration.",
+        default_factory=dict,
+        description="Assessment configuration.",
     )
 
 
@@ -86,9 +95,7 @@ def load_profile(path: str | Path) -> dict:
         raise FileNotFoundError(f"Profile not found: {profile_path}")
 
     if profile_path.suffix.lower() not in (".yaml", ".yml"):
-        raise FileNotFoundError(
-            f"Profile must be a .yaml or .yml file, got: {profile_path.suffix}"
-        )
+        raise FileNotFoundError(f"Profile must be a .yaml or .yml file, got: {profile_path.suffix}")
 
     try:
         with open(profile_path, encoding="utf-8") as fh:
@@ -133,8 +140,15 @@ def _build_profile_context_string(profile: dict) -> str:
     if tech:
         lines = ["Tech Stack:"]
         for key in (
-            "primary_language", "framework", "frontend", "database",
-            "version_control", "editor", "ci_cd", "containerisation", "deployment",
+            "primary_language",
+            "framework",
+            "frontend",
+            "database",
+            "version_control",
+            "editor",
+            "ci_cd",
+            "containerisation",
+            "deployment",
         ):
             val = tech.get(key)
             if val:
@@ -162,8 +176,10 @@ def _build_profile_context_string(profile: dict) -> str:
     if assess:
         lines = ["Assessment:"]
         for key in (
-            "practical_exams", "portfolio_items",
-            "proeve_preparation", "code_reviews_per_semester",
+            "practical_exams",
+            "portfolio_items",
+            "proeve_preparation",
+            "code_reviews_per_semester",
         ):
             val = assess.get(key)
             if val is not None:
@@ -212,5 +228,3 @@ def get_pre_populated_fields(spec: CourseSpecification) -> list[str]:
         if getattr(spec, key) is not None:
             fields.append(key)
     return fields
-
-    return data

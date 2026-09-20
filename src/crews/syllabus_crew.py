@@ -24,6 +24,7 @@ from __future__ import annotations
 import shutil
 import sys
 from datetime import UTC, datetime
+from enum import Enum
 from pathlib import Path
 
 from crewai import Agent, Crew, Process
@@ -47,7 +48,6 @@ from src.tasks.qa_review import create_qa_review_task
 from src.tasks.syllabus_generation import create_syllabus_generation_task
 from src.tasks.syllabus_review import create_syllabus_review_task
 from src.tasks.theory_generation import create_theory_task
-from enum import Enum
 
 
 class SwarmState(str, Enum):

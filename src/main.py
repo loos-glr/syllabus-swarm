@@ -61,7 +61,6 @@ _PROJECT_ROOT = Path(__file__).resolve().parent.parent
 if str(_PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(_PROJECT_ROOT))
 
-import yaml
 from dotenv import load_dotenv
 
 # Load environment variables *before* any internal imports that read them.
@@ -313,8 +312,14 @@ def _validate_resume_dir(resume_dir: str) -> Path:
 # ---------------------------------------------------------------------------
 from src.config_loader import (
     _build_profile_context_string as _build_profile_context_impl,
+)
+from src.config_loader import (
     get_pre_populated_fields as _get_pre_populated_fields_impl,
+)
+from src.config_loader import (
     inject_profile as _inject_profile_impl,
+)
+from src.config_loader import (
     load_profile as _load_profile_impl,
 )
 
