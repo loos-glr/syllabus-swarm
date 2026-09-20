@@ -144,6 +144,7 @@ def create_syllabus_generation_task(
     course_description: str | None = None,
     course_duration: str | None = None,
     target_audience: str | None = None,
+    human_feedback: str | None = None,
     verbose: bool = False,
 ) -> Task:
     """Create a CrewAI Task that generates a Humanics-aligned syllabus.
@@ -214,6 +215,17 @@ def create_syllabus_generation_task(
         .replace("_EXPERIENTIAL_LEARNING_MANDATE_", _EXPERIENTIAL_LEARNING_MANDATE)
         .replace("_MARKDOWN_STRUCTURE_REQUIREMENT_", _MARKDOWN_STRUCTURE_REQUIREMENT)
     )
+
+    # ── Inject human feedback (HITL loop) ───────────────────────────
+    if human_feedback:
+        description += (
+            f"\n\n## ⚠️ Human Feedback (Instructor Review)\n\n"
+            f"The following feedback was provided by a human reviewer "
+            f"and MUST be addressed in this iteration:\n\n"
+            f"{human_feedback}\n\n"
+            f"Please revise the output to incorporate this feedback "
+            f"while maintaining all other requirements.\n"
+        )
 
     # ---- Build the expected_output --------------------------------------
     expected_output = (

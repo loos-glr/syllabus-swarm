@@ -47,6 +47,27 @@ from src.tasks.qa_review import create_qa_review_task
 from src.tasks.syllabus_generation import create_syllabus_generation_task
 from src.tasks.syllabus_review import create_syllabus_review_task
 from src.tasks.theory_generation import create_theory_task
+from enum import Enum
+
+
+class SwarmState(str, Enum):
+    """Execution states for the HITL cyclic syllabus swarm.
+
+    .. rubric:: Issue #6 — Cyclic State Machine
+
+    Values
+    ------
+    GENERATING
+        Initial generation in progress (all agents run).
+    AWAITING_FEEDBACK
+        Generation complete; waiting for human review.
+    EXPORTING
+        Human approved; proceed to manifest export.
+    """
+
+    GENERATING = "generating"
+    AWAITING_FEEDBACK = "awaiting_feedback"
+    EXPORTING = "exporting"
 
 # ---------------------------------------------------------------------------
 # Constants
@@ -116,6 +137,8 @@ class CrewResult:
         syllabus_review_ok: bool = True,
         syllabus_review_error: str | None = None,
         syllabus_review_report: str | None = None,
+        human_feedback_requested: bool = False,
+        human_feedback_summary: str | None = None,
     ) -> None:
         self.syllabus_path = syllabus_path
         self.labs_base_path = labs_base_path
@@ -132,6 +155,8 @@ class CrewResult:
         self.syllabus_review_ok = syllabus_review_ok
         self.syllabus_review_error = syllabus_review_error
         self.syllabus_review_report = syllabus_review_report
+        self.human_feedback_requested = human_feedback_requested
+        self.human_feedback_summary = human_feedback_summary
 
     @property
     def all_succeeded(self) -> bool:
@@ -289,6 +314,7 @@ def run_syllabus_crew(
     skip_qa: bool = False,
     resume_dir: str | Path | None = None,
     run_id: str | None = None,
+    human_feedback: str | None = None,
 ) -> CrewResult:
     """Run all agents sequentially and return a full result summary.
 
