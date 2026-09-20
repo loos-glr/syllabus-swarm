@@ -47,7 +47,7 @@ HARDCODED_MODEL_STRIPPED: str = "deepseek-v4-pro"
 HARDCODED_TEMPERATURE: float = 0.2
 HARDCODED_TOP_P: float = 0.1
 HARDCODED_MAX_TOKENS: int = 8192
-OPENROUTER_BASE_URL: str = "https://openrouter.ai/api/v1"
+EXPECTED_DEFAULT_BASE_URL: str = "https://openrouter.ai/api/v1"
 
 _DUMMY_API_KEY: str = "sk-test-dummy-key-for-unit-tests"
 _BASE_ENV: dict[str, str] = {"OPENROUTER_API_KEY": _DUMMY_API_KEY}
@@ -59,6 +59,63 @@ ALL_ROLES: tuple[str, ...] = (
     EDUCATION_DIRECTOR,
 )
 
+# ═══════════════════════════════════════════════════════════════════════
+# Issue #3 RED PHASE — Model-Agnosticism Enforcement
+# These tests MUST fail until hardcoded provider URLs are purged.
+# ═══════════════════════════════════════════════════════════════════════
+
+
+class TestModelAgnosticBaseUrl:
+    """Verify the LLM factory reads base_url from env, not hardcoded constants."""
+
+    def test_no_hardcoded_openrouter_url_in_source(self) -> None:
+        """src/llm_factory.py uses env var for base URL (fallbacks allowed)."""
+        from pathlib import Path
+
+        factory_path = (
+            Path(__file__).resolve().parent.parent / "src" / "llm_factory.py"
+        )
+        source = factory_path.read_text()
+
+        # The fallback default inside os.getenv() is acceptable.
+        # But there should be exactly ONE such URL string — the fallback.
+        # Count occurrences of the OpenRouter URL:
+        occurrences = source.count("https://openrouter.ai/api/v1")
+        assert occurrences == 1, (
+            f"Expected exactly 1 fallback URL (in os.getenv), "
+            f"found {occurrences}. All other references must use _BASE_URL."
+        )
+
+        # Verify BASE_URL env var is referenced
+        assert "BASE_URL" in source, (
+            "src/llm_factory.py must reference the BASE_URL environment variable"
+        )
+
+    def test_base_url_env_var_overrides_default(self) -> None:
+        """BASE_URL env var MUST override the default base URL."""
+        custom_url = "https://custom-llm-proxy.example.com/v1"
+        with patch.dict(
+            os.environ,
+            {"OPENROUTER_API_KEY": "sk-test", "BASE_URL": custom_url},
+            clear=True,
+        ):
+            config = get_effective_config(CURRICULUM_ARCHITECT)
+            assert config["base_url"] == custom_url, (
+                f"BASE_URL env var not respected. "
+                f"Expected {custom_url}, got {config['base_url']}"
+            )
+
+    def test_api_key_env_var_fallback_works(self) -> None:
+        """API_KEY env var should also be checked as fallback for auth."""
+        with patch.dict(
+            os.environ,
+            {"API_KEY": "sk-from-generic"},
+            clear=True,
+        ):
+            config = get_effective_config(CURRICULUM_ARCHITECT)
+            assert config["api_key_status"] == "set", (
+                "API_KEY env var should be recognised as an auth credential"
+            )
 
 def _env(*extra: dict[str, str]) -> dict[str, str]:
     """Merge *extra* dicts on top of the base env (API key only)."""
@@ -185,14 +242,14 @@ class TestBuildLLMNoEnvironment:
             assert llm.temperature == HARDCODED_TEMPERATURE
             assert llm.top_p == HARDCODED_TOP_P
             assert llm.max_tokens == HARDCODED_MAX_TOKENS
-            assert llm.base_url == OPENROUTER_BASE_URL
+            assert llm.base_url == EXPECTED_DEFAULT_BASE_URL
 
     def test_all_known_agents_build_for_every_role(self) -> None:
         with patch.dict(os.environ, _env(), clear=True):
             for role in ALL_ROLES:
                 llm = build_llm_for_agent(role)
                 assert llm is not None, f"LLM should not be None for role {role}"
-                assert llm.base_url == OPENROUTER_BASE_URL
+                assert llm.base_url == EXPECTED_DEFAULT_BASE_URL
 
 
 # ---------------------------------------------------------------------------
@@ -259,7 +316,7 @@ class TestGetEffectiveConfig:
             assert config["model"] == "openai/per-agent-model"
             assert config["temperature"] == 0.6
             assert config["max_tokens"] == HARDCODED_MAX_TOKENS
-            assert config["base_url"] == OPENROUTER_BASE_URL
+            assert config["base_url"] == EXPECTED_DEFAULT_BASE_URL
 
     def test_effective_config_matches_built_llm(self) -> None:
         env = _env({"AGENT_DEFAULT_MODEL": "openai/default-model"})

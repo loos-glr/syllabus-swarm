@@ -17,7 +17,7 @@ Key features
   1. Per-agent override  → ``AGENT_{ROLE}_{PROPERTY}``
   2. Agent-wide default   → ``AGENT_DEFAULT_{PROPERTY}``
   3. Hardcoded sensible defaults
-* Always targets ``https://openrouter.ai/api/v1`` as the base URL.
+* Always targets the provider specified by ``BASE_URL``.
 * :func:`list_agent_configs` prints the effective configuration of every
   known agent for diagnostics and debugging.
 
@@ -54,9 +54,18 @@ from dotenv import load_dotenv
 load_dotenv()
 
 # ---------------------------------------------------------------------------
-# Constants — OpenRouter
+# Constants — Provider configuration (env-var driven, model-agnostic)
 # ---------------------------------------------------------------------------
-OPENROUTER_BASE_URL: str = "https://openrouter.ai/api/v1"
+# BASE_URL is read from the environment so the factory is portable across
+# any OpenAI-compatible provider (OpenRouter, Together, Fireworks, local
+# Ollama/vLLM, etc.).  The fallback value ensures backward compatibility
+# with existing OpenRouter deployments.
+_BASE_URL: str = os.getenv("BASE_URL", "https://openrouter.ai/api/v1")
+
+
+def _get_base_url() -> str:
+    """Return the effective base URL, respecting the BASE_URL env var."""
+    return os.getenv("BASE_URL", _BASE_URL)
 
 # ---------------------------------------------------------------------------
 # Agent role constants
@@ -163,7 +172,7 @@ def build_llm_for_agent(
 ) -> LLM:
     """Build a ``crewai.LLM`` instance configured for a specific agent.
 
-    All agents connect through **OpenRouter** (https://openrouter.ai/api/v1).
+    All agents connect through the provider specified by ``BASE_URL``.
     Model, temperature, top_p, and max_tokens are resolved through a 3-tier
     fallback chain that allows per-agent customisation while always falling
     back to a working configuration — even when no environment variables are
@@ -192,7 +201,12 @@ def build_llm_for_agent(
         raise ValueError(f"agent_role must be a non-empty string, got {agent_role!r}")
 
     # Resolve the API key — use explicit argument first, then env var.
-    resolved_api_key: str = api_key if api_key is not None else os.getenv("OPENROUTER_API_KEY", "")
+    resolved_api_key: str = (
+        api_key
+        if api_key is not None
+        else os.getenv("OPENROUTER_API_KEY")
+        or os.getenv("API_KEY", "")
+    )
 
     model: str = _resolve_property(
         agent_role,
@@ -223,7 +237,7 @@ def build_llm_for_agent(
     return LLM(
         model=model,
         api_key=resolved_api_key,
-        base_url=OPENROUTER_BASE_URL,
+        base_url=_get_base_url(),
         temperature=temperature,
         top_p=top_p,
         max_tokens=max_tokens,
@@ -236,7 +250,7 @@ def get_effective_config(agent_role: str) -> dict[str, object]:
     This is the programmatic counterpart to list_agent_configs — useful
     when you need the resolved values in code rather than printed to stdout.
     """
-    resolved_api_key: str = os.getenv("OPENROUTER_API_KEY", "")
+    resolved_api_key: str = os.getenv("OPENROUTER_API_KEY") or os.getenv("API_KEY", "")
     api_key_status: str = "set" if resolved_api_key else "missing — authentication will fail"
 
     return {
@@ -263,7 +277,7 @@ def get_effective_config(agent_role: str) -> dict[str, object]:
                 hardcoded_default=_DEFAULT_MAX_TOKENS,
             )
         ),
-        "base_url": OPENROUTER_BASE_URL,
+        "base_url": _get_base_url(),
         "api_key_status": api_key_status,
     }
 
@@ -280,7 +294,7 @@ def list_agent_configs() -> None:
     print("=" * 60)
     print()
 
-    print(f"  OpenRouter Base URL:  {OPENROUTER_BASE_URL}")
+    print(f"  OpenRouter Base URL:  {_get_base_url()}")
     api_key = os.getenv("OPENROUTER_API_KEY", "")
     status = "set" if api_key else "missing — authentication will fail"
     print(f"  API Key:              {status}")
