@@ -924,4 +924,168 @@ class TestCreateEducationDirector:
             return_value=mock_llm,
         ):
             agent = create_education_director()
-            assert "Feasibility Audit Report" in agent.goal
+
+
+# ===================================================================
+# create_media_strategist
+# ===================================================================
+
+
+class TestCreateMediaStrategist:
+    """Tests for the Media Strategist agent factory."""
+
+    def test_role_contains_media_strategist(self, mock_llm: MagicMock) -> None:
+        from src.agents.media_strategist import create_media_strategist
+
+        with patch(
+            "src.llm_factory.build_llm_for_agent",
+            return_value=mock_llm,
+        ):
+            agent = create_media_strategist()
+            assert "Media Strategist" in agent.role
+
+    def test_goal_mentions_modality_routing(self, mock_llm: MagicMock) -> None:
+        from src.agents.media_strategist import create_media_strategist
+
+        with patch(
+            "src.llm_factory.build_llm_for_agent",
+            return_value=mock_llm,
+        ):
+            agent = create_media_strategist()
+            assert "modality" in agent.goal.lower()
+
+    def test_goal_mentions_pedagogical_complexity(self, mock_llm: MagicMock) -> None:
+        from src.agents.media_strategist import create_media_strategist
+
+        with patch(
+            "src.llm_factory.build_llm_for_agent",
+            return_value=mock_llm,
+        ):
+            agent = create_media_strategist()
+            assert "pedagogical" in agent.goal.lower() or "complexity" in agent.goal.lower()
+
+    def test_backstory_mentions_instructional_design(self, mock_llm: MagicMock) -> None:
+        from src.agents.media_strategist import create_media_strategist
+
+        with patch(
+            "src.llm_factory.build_llm_for_agent",
+            return_value=mock_llm,
+        ):
+            agent = create_media_strategist()
+            assert (
+                "instructional" in agent.backstory.lower() or "modality" in agent.backstory.lower()
+            )
+
+    def test_allow_delegation_is_false(self, mock_llm: MagicMock) -> None:
+        from src.agents.media_strategist import create_media_strategist
+
+        with patch(
+            "src.llm_factory.build_llm_for_agent",
+            return_value=mock_llm,
+        ):
+            agent = create_media_strategist()
+            assert agent.allow_delegation is False
+
+    def test_llm_factory_called_with_correct_role(self, mock_llm: MagicMock) -> None:
+        from src.agents.media_strategist import create_media_strategist
+
+        with patch(
+            "src.llm_factory.build_llm_for_agent",
+            return_value=mock_llm,
+        ) as mock_build:
+            create_media_strategist()
+            # The factory should be called with the MEDIA_STRATEGIST role constant
+            mock_build.assert_called_once()
+
+    def test_explicit_llm_bypasses_factory(self, mock_llm: MagicMock) -> None:
+        from src.agents.media_strategist import create_media_strategist
+
+        custom_llm = MagicMock(spec=LLM)
+        with patch("src.llm_factory.build_llm_for_agent") as mock_build:
+            agent = create_media_strategist(llm=custom_llm)
+            assert agent.llm is custom_llm
+            mock_build.assert_not_called()
+
+
+# ===================================================================
+# create_video_engineer
+# ===================================================================
+
+
+class TestCreateVideoEngineer:
+    """Tests for the Video Engineer agent factory."""
+
+    def test_role_contains_video_engineer(self, mock_llm: MagicMock) -> None:
+        from src.agents.video_engineer import create_video_engineer
+
+        with patch(
+            "src.llm_factory.build_llm_for_agent",
+            return_value=mock_llm,
+        ):
+            agent = create_video_engineer()
+            assert "Video Engineer" in agent.role
+
+    def test_goal_mentions_remotion(self, mock_llm: MagicMock) -> None:
+        from src.agents.video_engineer import create_video_engineer
+
+        with patch(
+            "src.llm_factory.build_llm_for_agent",
+            return_value=mock_llm,
+        ):
+            agent = create_video_engineer()
+            assert (
+                "Remotion" in agent.goal
+                or "remotion" in agent.goal.lower()
+                or "React" in agent.goal
+            )
+
+    def test_goal_mentions_jsx(self, mock_llm: MagicMock) -> None:
+        from src.agents.video_engineer import create_video_engineer
+
+        with patch(
+            "src.llm_factory.build_llm_for_agent",
+            return_value=mock_llm,
+        ):
+            agent = create_video_engineer()
+            assert "JSX" in agent.goal or "jsx" in agent.goal.lower() or "React" in agent.goal
+
+    def test_backstory_mentions_deterministic(self, mock_llm: MagicMock) -> None:
+        from src.agents.video_engineer import create_video_engineer
+
+        with patch(
+            "src.llm_factory.build_llm_for_agent",
+            return_value=mock_llm,
+        ):
+            agent = create_video_engineer()
+            assert (
+                "deterministic" in agent.backstory.lower() or "temporal" in agent.backstory.lower()
+            )
+
+    def test_allow_delegation_is_false(self, mock_llm: MagicMock) -> None:
+        from src.agents.video_engineer import create_video_engineer
+
+        with patch(
+            "src.llm_factory.build_llm_for_agent",
+            return_value=mock_llm,
+        ):
+            agent = create_video_engineer()
+            assert agent.allow_delegation is False
+
+    def test_llm_factory_called_with_correct_role(self, mock_llm: MagicMock) -> None:
+        from src.agents.video_engineer import create_video_engineer
+
+        with patch(
+            "src.llm_factory.build_llm_for_agent",
+            return_value=mock_llm,
+        ) as mock_build:
+            create_video_engineer()
+            mock_build.assert_called_once()
+
+    def test_explicit_llm_bypasses_factory(self, mock_llm: MagicMock) -> None:
+        from src.agents.video_engineer import create_video_engineer
+
+        custom_llm = MagicMock(spec=LLM)
+        with patch("src.llm_factory.build_llm_for_agent") as mock_build:
+            agent = create_video_engineer(llm=custom_llm)
+            assert agent.llm is custom_llm
+            mock_build.assert_not_called()

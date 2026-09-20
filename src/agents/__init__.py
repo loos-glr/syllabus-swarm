@@ -23,3 +23,11 @@ from src.agents.theory_instructor import (
     create_theory_instructor,  # noqa: F401 — re-exported for external use
     get_theory_instructor,  # noqa: F401 — re-exported for external use
 )
+from src.agents.media_strategist import (
+    create_media_strategist,  # noqa: F401 — re-exported for external use
+    get_media_strategist,  # noqa: F401 — re-exported for external use
+)
+from src.agents.video_engineer import (
+    create_video_engineer,  # noqa: F401 — re-exported for external use
+    get_video_engineer,  # noqa: F401 — re-exported for external use
+)

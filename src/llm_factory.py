@@ -67,6 +67,7 @@ def _get_base_url() -> str:
     """Return the effective base URL, respecting the BASE_URL env var."""
     return os.getenv("BASE_URL", _BASE_URL)
 
+
 # ---------------------------------------------------------------------------
 # Agent role constants
 # ---------------------------------------------------------------------------
@@ -77,6 +78,8 @@ INTAKE_SPECIALIST: str = "INTAKE_SPECIALIST"
 QA_REVIEWER: str = "QA_REVIEWER"
 THEORY_INSTRUCTOR: str = "THEORY_INSTRUCTOR"
 EDUCATION_DIRECTOR: str = "EDUCATION_DIRECTOR"
+MEDIA_STRATEGIST: str = "MEDIA_STRATEGIST"
+VIDEO_ENGINEER: str = "VIDEO_ENGINEER"
 
 # All known agent roles (used by list_agent_configs).
 _KNOWN_ROLES: tuple[str, ...] = (
@@ -87,6 +90,8 @@ _KNOWN_ROLES: tuple[str, ...] = (
     QA_REVIEWER,
     THEORY_INSTRUCTOR,
     EDUCATION_DIRECTOR,
+    MEDIA_STRATEGIST,
+    VIDEO_ENGINEER,
 )
 
 # ---------------------------------------------------------------------------
@@ -204,8 +209,7 @@ def build_llm_for_agent(
     resolved_api_key: str = (
         api_key
         if api_key is not None
-        else os.getenv("OPENROUTER_API_KEY")
-        or os.getenv("API_KEY", "")
+        else os.getenv("OPENROUTER_API_KEY") or os.getenv("API_KEY", "")
     )
 
     model: str = _resolve_property(
