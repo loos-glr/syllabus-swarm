@@ -26,3 +26,17 @@ The application is logically segmented into the following architectural domains:
 *   **Layer 2: Application Business Rules (Use Cases):** `src/tasks/`, `src/crews/`. Orchestrates the swarm, handles cyclic HITL state machine logic. Dependencies: Layer 1.
 *   **Layer 3: Interface Adapters (Gateways & Presenters):** `src/agents/`, `src/exporters/`. Defines personas and translates swarm memory into deployable artifact structures. Dependencies: Layer 2.
 *   **Layer 4: Frameworks & Drivers (Infrastructure):** `src/main.py`, `src/llm_factory.py`. Bootstraps CLI, handles IO, and connects to LLM providers using standard SDKs. Dependencies: Layer 3.
+
+## 5. Modality Routing & Video-as-Code (VaC) Extension
+*   **Domain Expansion (Layer 1):** Introduction of `ModalityType` Enum (`CLASSIC_READER`, `INTERACTIVE_WEB`, `INTERACTIVE_CLI`, `VIDEO_AS_CODE`), `ModalityDecision`, and `RemotionManifest`.
+*   **Agent Expansion (Layer 3):**
+    *   `media_strategist`: Analyzes curriculum complexity and outputs a strict `ModalityDecision` to route generation.
+    *   `video_engineer`: Specializes in generating deterministic temporal code (React/Remotion JSX) instead of prose.
+*   **Polyglot Export (Layer 3):** The `file_writer` intercepts `RemotionManifest` data to persist valid `.tsx`/`.jsx` files into a dedicated `src/export/vac/` directory, completely isolated from Markdown generation.
+
+## 6. Modality Routing & Video-as-Code (VaC) Extension
+*   **Domain Expansion (Layer 1):** Introduction of `ModalityType` Enum (`CLASSIC_READER`, `INTERACTIVE_WEB`, `INTERACTIVE_CLI`, `VIDEO_AS_CODE`), `ModalityDecision`, and `RemotionManifest`.
+*   **Agent Expansion (Layer 3):**
+    *   `media_strategist`: Analyzes curriculum complexity and outputs a strict `ModalityDecision` to route generation.
+    *   `video_engineer`: Specializes in generating deterministic temporal code (React/Remotion JSX) instead of prose.
+*   **Polyglot Export (Layer 3):** The `file_writer` intercepts `RemotionManifest` data to persist valid `.tsx`/`.jsx` files into a dedicated `src/export/vac/` directory, completely isolated from Markdown generation.
