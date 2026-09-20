@@ -68,6 +68,8 @@ class SwarmState(str, Enum):
     GENERATING = "generating"
     AWAITING_FEEDBACK = "awaiting_feedback"
     EXPORTING = "exporting"
+    VIDEO_GENERATING = "video_generating"
+
 
 # ---------------------------------------------------------------------------
 # Constants
