@@ -455,6 +455,133 @@ def write_rubric(
 
 
 # ---------------------------------------------------------------------------
+# RemotionManifest → .tsx export (Issue #11 — Polyglot VaC output)
+# ---------------------------------------------------------------------------
+
+
+def write_remotion_manifest(
+    manifest: object,
+    *,
+    force: bool = False,
+) -> Path:
+    """Write a ``RemotionManifest`` as a valid ``.tsx`` file to ``src/export/vac/``.
+
+    The generated ``.tsx`` file is a self-contained React/Remotion composition
+    that imports the Remotion framework and exports a named composition component.
+    Output is placed in ``src/export/vac/`` — completely isolated from the
+    Markdown curriculum artifacts in ``output/``.
+
+    Parameters
+    ----------
+    manifest : RemotionManifest
+        The VaC composition descriptor produced by the Video Engineer agent.
+    force : bool
+        When ``False``, raises ``FileWriteError`` if the ``.tsx`` file already
+        exists.
+
+    Returns
+    -------
+    Path
+        Absolute path to the written ``.tsx`` file.
+
+    Raises
+    ------
+    TypeError
+        If *manifest* is not a ``RemotionManifest`` instance.
+    FileWriteError
+        If the target file already exists and *force* is ``False``.
+    """
+    # Lazy import to keep the module-level dependency footprint small.
+    from src.models import RemotionManifest  # noqa: PLC0415
+
+    if not isinstance(manifest, RemotionManifest):
+        raise TypeError(f"Expected a RemotionManifest instance, got {type(manifest).__name__}")
+
+    safe_name = _sanitize_filename(manifest.composition_id)
+    vac_dir = _PROJECT_ROOT / "src" / "export" / "vac"
+    vac_dir.mkdir(parents=True, exist_ok=True)
+    output_path = vac_dir / f"{safe_name}.tsx"
+
+    # Generate a minimal but valid React/Remotion .tsx composition.
+    component_lines: list[str] = []
+    component_lines.append(
+        'import {useCurrentFrame, useVideoConfig, AbsoluteFill} from "remotion";'
+    )
+    component_lines.append("")
+    component_lines.append(f"export const {manifest.composition_id} = () => {{")
+    component_lines.append("  const frame = useCurrentFrame();")
+    component_lines.append("  const {{fps, durationInFrames}} = useVideoConfig();")
+    component_lines.append("")
+    component_lines.append("  return (")
+    component_lines.append('    <AbsoluteFill style={{backgroundColor: "white"}}>')
+    component_lines.append(f"      <h1>{{manifest.composition_id}}</h1>")
+    component_lines.append(f"      <p>Frame {{frame}} / {{durationInFrames}}</p>")
+    component_lines.extend(_render_components(manifest.components, indent=6))
+    component_lines.append("    </AbsoluteFill>")
+    component_lines.append("  );")
+    component_lines.append("};")
+    component_lines.append("")
+
+    content = "\n".join(component_lines)
+
+    return write_file(output_path, content, force=force)
+
+
+def _render_components(
+    components: list[dict[str, object]],
+    *,
+    indent: int = 0,
+) -> list[str]:
+    """Recursively render RemotionManifest components to JSX lines.
+
+    Parameters
+    ----------
+    components : list[dict[str, object]]
+        Ordered list of component descriptors from the manifest.
+    indent : int
+        Current indentation level in spaces.
+
+    Returns
+    -------
+    list[str]
+        JSX-formatted lines representing the component tree.
+    """
+    lines: list[str] = []
+    prefix = " " * indent
+
+    for comp in components:
+        comp_type = str(comp.get("type", "div"))
+        comp_name = str(comp.get("name", ""))
+        comp_props: dict[str, object] = dict(comp.get("props", {}) or {})
+        children: list[dict[str, object]] = list(comp.get("children", []) or [])
+
+        props_str = ""
+        if comp_props:
+            prop_parts = []
+            for k, v in comp_props.items():
+                if isinstance(v, str):
+                    prop_parts.append(f'{k}="{v}"')
+                elif isinstance(v, bool):
+                    prop_parts.append(f"{k}={str(v).lower()}")
+                else:
+                    prop_parts.append(f"{k}={{{v}}}")
+            props_str = " " + " ".join(prop_parts)
+
+        if children:
+            lines.append(f"{prefix}<{comp_type}{props_str}>")
+            lines.extend(_render_components(children, indent=indent + 2))
+            lines.append(f"{prefix}</{comp_type}>")
+        elif comp_name:
+            lines.append(f"{prefix}<{comp_type}{props_str}>")
+            lines.append(f"{prefix}  {{/* {comp_name} */}}")
+            lines.append(f"{prefix}</{comp_type}>")
+        else:
+            lines.append(f"{prefix}<{comp_type}{props_str} />")
+
+    return lines
+
+
+# ---------------------------------------------------------------------------
 # Self-test
 # ---------------------------------------------------------------------------
 if __name__ == "__main__":

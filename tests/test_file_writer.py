@@ -412,3 +412,111 @@ class TestFileWriteError:
             raise FileWriteError("custom error text")
         except FileWriteError as e:
             assert str(e) == "custom error text"
+
+
+# ===================================================================
+# RemotionManifest export — polyglot .tsx output (Issue #11)
+# ===================================================================
+
+
+class TestRemotionExport:
+    """Tests for RemotionManifest → .tsx file writing."""
+
+    @pytest.fixture(autouse=True)
+    def _setup(self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+        """Redirect _PROJECT_ROOT to tmp_path for isolated testing."""
+        import src.exporters.file_writer as fw
+
+        monkeypatch.setattr(fw, "_PROJECT_ROOT", tmp_path)
+        # Create the expected VAC export directory structure
+        (tmp_path / "src" / "export" / "vac").mkdir(parents=True, exist_ok=True)
+
+    def test_write_remotion_manifest_creates_tsx_file(self, tmp_path: Path) -> None:
+        """write_remotion_manifest creates a .tsx file in src/export/vac/."""
+        from src.exporters.file_writer import write_remotion_manifest
+        from src.models import RemotionManifest
+
+        manifest = RemotionManifest(
+            composition_id="intro_animation",
+            duration_in_frames=300,
+            components=[
+                {"type": "Sequence", "name": "main", "children": []},
+            ],
+            module_name="Intro Module",
+        )
+        output_path = write_remotion_manifest(manifest, force=True)
+        assert output_path.suffix == ".tsx"
+        assert output_path.exists()
+        assert "src/export/vac" in str(output_path)
+
+    def test_tsx_file_contains_remotion_imports(self, tmp_path: Path) -> None:
+        """Generated .tsx file contains Remotion framework imports."""
+        from src.exporters.file_writer import write_remotion_manifest
+        from src.models import RemotionManifest
+
+        manifest = RemotionManifest(
+            composition_id="test_composition",
+            duration_in_frames=150,
+            components=[],
+            module_name="Test Module",
+        )
+        output_path = write_remotion_manifest(manifest, force=True)
+        content = output_path.read_text()
+        assert "remotion" in content.lower()
+        assert "import" in content
+
+    def test_tsx_file_contains_composition_export(self, tmp_path: Path) -> None:
+        """Generated .tsx file exports a React composition component."""
+        from src.exporters.file_writer import write_remotion_manifest
+        from src.models import RemotionManifest
+
+        manifest = RemotionManifest(
+            composition_id="MyComposition",
+            duration_in_frames=200,
+            components=[
+                {"type": "Text", "props": {"content": "Hello"}},
+            ],
+            module_name="Demo Module",
+        )
+        output_path = write_remotion_manifest(manifest, force=True)
+        content = output_path.read_text()
+        assert "export" in content
+        assert "MyComposition" in content
+
+    def test_output_goes_to_vac_directory(self, tmp_path: Path) -> None:
+        """Output is placed in src/export/vac/, isolated from Markdown output."""
+        from src.exporters.file_writer import write_remotion_manifest
+        from src.models import RemotionManifest
+
+        manifest = RemotionManifest(
+            composition_id="isolated_test",
+            duration_in_frames=100,
+            components=[],
+            module_name="Isolation Test",
+        )
+        output_path = write_remotion_manifest(manifest, force=True)
+        assert output_path.parent == tmp_path / "src" / "export" / "vac"
+
+    def test_overwrite_protection(self, tmp_path: Path) -> None:
+        """write_remotion_manifest raises FileWriteError on overwrite without force."""
+        from src.exporters.file_writer import FileWriteError, write_remotion_manifest
+        from src.models import RemotionManifest
+
+        manifest = RemotionManifest(
+            composition_id="protected",
+            duration_in_frames=100,
+            components=[],
+            module_name="Protection Test",
+        )
+        write_remotion_manifest(manifest, force=True)
+
+        with pytest.raises(FileWriteError, match="already exists"):
+            write_remotion_manifest(manifest, force=False)
+
+    def test_invalid_manifest_type_raises_error(self) -> None:
+        """Passing a non-RemotionManifest object raises TypeError."""
+        from src.exporters.file_writer import write_remotion_manifest
+
+        with pytest.raises(TypeError):
+            write_remotion_manifest("not a manifest")  # type: ignore[arg-type]
+            assert str(e) == "custom error text"
