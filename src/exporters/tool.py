@@ -63,6 +63,7 @@ from src.exporters.file_writer import (
     FileWriteError,
     write_directory_tree,
     write_file,
+    write_remotion_manifest,
     write_syllabus,
 )
 from src.exporters.manifest import (
@@ -194,7 +195,7 @@ class OutputExportTool(BaseTool):
         "tree.  Call it with a required 'command' keyword argument plus "
         "command-specific keyword arguments.  Supported commands: "
         "write-syllabus, write-labs, generate-manifest, export-course-graph, "
-        "write-file, write-directory-tree.  "
+        "write-file, write-directory-tree, write-remotion-manifest.  "
         "Example: command='write-syllabus', course_name='ML 101', "
         "content='# Syllabus\\n...'"
     )
@@ -216,7 +217,7 @@ class OutputExportTool(BaseTool):
             "tier='tier1_foundations', run_id='...', files={...}.  "
             "Supported commands: write-syllabus, write-labs, "
             "generate-manifest, export-course-graph, write-file, "
-            "write-directory-tree."
+            "write-directory-tree, write-remotion-manifest."
         )
 
     def _run(self, **kwargs: Any) -> str:
@@ -494,6 +495,49 @@ class OutputExportTool(BaseTool):
             str(written[0]) if written else base_path,
         )
 
+    def _handle_write_remotion_manifest(self, params: dict[str, Any]) -> str:
+        """Write a RemotionManifest as a .tsx file to src/export/vac/.
+
+        Required kwargs: ``manifest`` (a ``RemotionManifest``-compatible dict).
+
+        The *manifest* dict must contain at minimum a ``composition_id``
+        (``str``) and ``components`` (``list[dict]``) field.  Optional fields
+        include ``duration_in_frames``, ``fps``, ``width``, ``height``, and
+        ``module_name``.
+        """
+        from src.models import RemotionManifest
+
+        manifest_raw = params.get("manifest")
+        if not manifest_raw:
+            return _err(
+                "Missing required parameter: 'manifest'.  Expected a dict with "
+                "at least 'composition_id' and 'components'."
+            )
+
+        # Auto-parse JSON strings.
+        if isinstance(manifest_raw, str):
+            try:
+                manifest_raw = json.loads(manifest_raw)
+            except (json.JSONDecodeError, TypeError):
+                return _err("Invalid 'manifest' parameter: could not parse JSON string.")
+
+        if not isinstance(manifest_raw, dict):
+            return _err(
+                f"Invalid 'manifest' parameter: expected a dict, got {type(manifest_raw).__name__}."
+            )
+
+        try:
+            manifest = RemotionManifest.model_validate(manifest_raw)
+        except Exception as exc:
+            return _err(f"Invalid RemotionManifest: {exc}")
+
+        try:
+            path = write_remotion_manifest(manifest, force=self.force)
+        except FileWriteError as exc:
+            return _err(str(exc))
+
+        return _ok(f"Remotion manifest written for '{manifest.composition_id}'.", path)
+
 
 # ---------------------------------------------------------------------------
 # CLI — Argument Parser
@@ -531,6 +575,8 @@ def build_cli_parser() -> argparse.ArgumentParser:
             '--content "# Hello"\n'
             "  %(prog)s write-directory-tree --base-path output/labs "
             '--files \'{"a.py": "# a"}\'\n'
+            "  %(prog)s write-remotion-manifest "
+            '--manifest \'{"composition_id":"demo","components":[]}\'\n'
         ),
     )
 
@@ -743,6 +789,26 @@ def build_cli_parser() -> argparse.ArgumentParser:
         ),
     )
 
+    # ── write-remotion-manifest ─────────────────────────────────────
+    wrm = sub.add_parser(
+        "write-remotion-manifest",
+        help="Write a RemotionManifest as a .tsx file to src/export/vac/.",
+        description=(
+            "Write a deterministic Video-as-Code React/Remotion .tsx "
+            "composition from a RemotionManifest descriptor."
+        ),
+    )
+    wrm.add_argument(
+        "--manifest",
+        required=True,
+        help=(
+            "JSON object representing a RemotionManifest.  "
+            "Must contain 'composition_id' (str) and "
+            "'components' (list[dict]).  "
+            'Example: \'{"composition_id":"demo","components":[]}\''
+        ),
+    )
+
     return parser
 
 
@@ -856,6 +922,10 @@ def main(argv: list[str] | None = None) -> None:
         result_str = tool._handle_write_directory_tree(
             {"base_path": args.base_path, "files": files_dict}
         )
+
+    elif command == "write-remotion-manifest":
+        manifest_raw = args.manifest
+        result_str = tool._handle_write_remotion_manifest({"manifest": manifest_raw})
 
     else:
         result_str = _err(f"Unknown command: '{command}'.")

@@ -6,6 +6,7 @@ from src.exporters.file_writer import (
     OutputPathConfig,
     write_directory_tree,
     write_file,
+    write_remotion_manifest,
     write_rubric,
     write_syllabus,
 )
@@ -22,6 +23,7 @@ __all__ = [
     "OUTPUT_PATHS",
     "write_directory_tree",
     "write_file",
+    "write_remotion_manifest",
     "write_syllabus",
     "write_rubric",
     # manifest
