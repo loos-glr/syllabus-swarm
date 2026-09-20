@@ -28,6 +28,7 @@ Public API
 from __future__ import annotations
 
 import datetime
+from enum import Enum
 
 from pydantic import BaseModel, Field
 
@@ -205,4 +206,116 @@ class CourseGraph(BaseModel):
             "%Y-%m-%dT%H:%M:%SZ"
         ),
         description="ISO 8601 UTC timestamp when the graph was generated.",
+    )
+
+
+# ---------------------------------------------------------------------------
+# ModalityType — Pedagogical modality enum for modality routing
+# ---------------------------------------------------------------------------
+
+
+class ModalityType(str, Enum):
+    """Pedagogical modality for content delivery.
+
+    Used by the Media Strategist agent to route curriculum modules
+    to the appropriate content generator.
+
+    Values
+    ------
+    CLASSIC_READER
+        Traditional text/Markdown-based theory delivery.
+    INTERACTIVE_WEB
+        Browser-based interactive HTML/JS learning artifacts.
+    INTERACTIVE_CLI
+        Terminal-based interactive learning scripts.
+    VIDEO_AS_CODE
+        Deterministic React/Remotion video generation (VaC).
+    """
+
+    CLASSIC_READER = "classic_reader"
+    INTERACTIVE_WEB = "interactive_web"
+    INTERACTIVE_CLI = "interactive_cli"
+    VIDEO_AS_CODE = "video_as_code"
+
+
+# ---------------------------------------------------------------------------
+# ModalityDecision — Media Strategist routing output
+# ---------------------------------------------------------------------------
+
+
+class ModalityDecision(BaseModel):
+    """Output of the Media Strategist agent — routes a module to a generator.
+
+    Each curriculum module receives exactly one ModalityDecision that
+    the swarm state machine reads to determine whether to invoke the
+    Theory Instructor (CLASSIC_READER) or Video Engineer (VIDEO_AS_CODE).
+    """
+
+    module_name: str = Field(
+        description="Human-readable module title the decision applies to.",
+        min_length=1,
+    )
+    modality: ModalityType = Field(
+        description="Selected pedagogical modality for this module.",
+    )
+    rationale: str = Field(
+        description="Pedagogical justification for the modality choice.",
+        min_length=1,
+    )
+    complexity_score: float = Field(
+        description="Estimated complexity of the module (0.0 = trivial, 1.0 = very complex).",
+        ge=0.0,
+        le=1.0,
+    )
+    suggested_components: list[str] = Field(
+        default_factory=list,
+        description="Suggested visual/code components for the chosen modality.",
+    )
+
+
+# ---------------------------------------------------------------------------
+# RemotionManifest — Deterministic VaC composition data
+# ---------------------------------------------------------------------------
+
+
+class RemotionManifest(BaseModel):
+    """Deterministic Video-as-Code composition descriptor.
+
+    Produced by the Video Engineer agent.  Contains all the structural
+    metadata needed to render a React/Remotion composition — scene
+    sequences, timing, and component hierarchy — without any narrative
+    prose or pixel-based media.
+    """
+
+    composition_id: str = Field(
+        description="Unique identifier for the Remotion composition (e.g. 'recursion_basics').",
+        min_length=1,
+    )
+    duration_in_frames: int = Field(
+        description="Total duration of the composition in frames.",
+        gt=0,
+    )
+    fps: int = Field(
+        default=30,
+        description="Frames per second for the composition.",
+        gt=0,
+    )
+    width: int = Field(
+        default=1920,
+        description="Canvas width in pixels.",
+        gt=0,
+    )
+    height: int = Field(
+        default=1080,
+        description="Canvas height in pixels.",
+        gt=0,
+    )
+    components: list[dict[str, object]] = Field(
+        default_factory=list,
+        description="Ordered list of scene/sequence descriptors.  Each dict "
+        "represents a React component with type, props, and optional children.",
+    )
+    module_name: str = Field(
+        description="The curriculum module this composition belongs to.",
+        min_length=1,
     )
