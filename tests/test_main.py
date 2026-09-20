@@ -102,3 +102,57 @@ class TestCourseSpecification:
         )
         assert "Node.js" in spec.course_context
         assert "BOL" in spec.course_context
+# ═══════════════════════════════════════════════════════════════════════
+# Issue #7 RED PHASE — Interactive CLI Feedback Tests
+# These tests MUST fail until prompt_for_feedback is implemented.
+# ═══════════════════════════════════════════════════════════════════════
+
+
+class TestPromptForFeedback:
+    """Verify the interactive feedback prompt function for HITL."""
+
+    def test_prompt_for_feedback_exists(self) -> None:
+        """src.main MUST expose a prompt_for_feedback function."""
+        from src.main import prompt_for_feedback
+
+        assert callable(prompt_for_feedback)
+
+    def test_prompt_returns_approve_for_a(self) -> None:
+        """Typing 'A' returns ('APPROVE', None)."""
+        from src.main import prompt_for_feedback
+
+        with pytest.MonkeyPatch.context() as mp:
+            mp.setattr("builtins.input", lambda _: "A")
+            action, feedback = prompt_for_feedback()
+            assert action == "APPROVE"
+            assert feedback is None
+
+    def test_prompt_returns_quit_for_q(self) -> None:
+        """Typing 'Q' returns ('QUIT', None)."""
+        from src.main import prompt_for_feedback
+
+        with pytest.MonkeyPatch.context() as mp:
+            mp.setattr("builtins.input", lambda _: "Q")
+            action, feedback = prompt_for_feedback()
+            assert action == "QUIT"
+
+    def test_prompt_returns_feedback_for_other_input(self) -> None:
+        """Any non-A/Q input is treated as feedback text."""
+        from src.main import prompt_for_feedback
+
+        with pytest.MonkeyPatch.context() as mp:
+            mp.setattr("builtins.input", lambda _: "Modules are too long")
+            action, feedback = prompt_for_feedback()
+            assert action == "FEEDBACK"
+            assert feedback == "Modules are too long"
+
+    def test_whitespace_only_input_is_treated_as_feedback(self) -> None:
+        """Whitespace-only input is treated as FEEDBACK (stripped to empty)."""
+        from src.main import prompt_for_feedback
+
+        with pytest.MonkeyPatch.context() as mp:
+            mp.setattr("builtins.input", lambda _: "   ")
+            action, feedback = prompt_for_feedback()
+            assert action == "FEEDBACK"
+            # strip() removes whitespace, resulting in empty string
+            assert feedback == ""

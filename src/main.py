@@ -177,6 +177,40 @@ def build_cli_parser() -> argparse.ArgumentParser:
 
     return parser
 
+# ---------------------------------------------------------------------------
+# HITL Feedback Prompt (Issue #7)
+# ---------------------------------------------------------------------------
+
+
+def prompt_for_feedback() -> tuple[str, str | None]:
+    """Prompt the user for approval or feedback after a generation cycle.
+
+    Returns
+    -------
+    tuple[str, str | None]
+        A ``(action, feedback_text)`` pair where:
+        - ``action`` is one of ``"APPROVE"``, ``"QUIT"``, or ``"FEEDBACK"``
+        - ``feedback_text`` is the user's critique when action is ``"FEEDBACK"``,
+          ``None`` otherwise.
+    """
+    print()
+    print("─" * 60)
+    print("  🐝  Syllabus Swarm — Generation Complete")
+    print("─" * 60)
+    print()
+    print("  [A] Approve — finalise and export")
+    print("  [Q] Quit — discard and exit")
+    print("  [any other text] — provide feedback for re-generation")
+    print()
+
+    user_input = input("  Your choice: ").strip()
+
+    if user_input.upper() == "A":
+        return ("APPROVE", None)
+    elif user_input.upper() == "Q":
+        return ("QUIT", None)
+    else:
+        return ("FEEDBACK", user_input)
 
 # ---------------------------------------------------------------------------
 # CLI helpers (post-argparse)
