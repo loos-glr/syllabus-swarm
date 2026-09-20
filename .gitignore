@@ -67,6 +67,7 @@ docker-compose.override.yml
 
 # --- Generated output (never commit) ---
 output/
+src/export/
 
 
 # START Ruler Generated Files
