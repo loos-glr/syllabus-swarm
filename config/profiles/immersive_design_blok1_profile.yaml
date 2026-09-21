@@ -1,0 +1,82 @@
+# =============================================================================
+# Cohort Profile: MINOR2 Immersive Design - Blok 1: WebXR Introductie
+# =============================================================================
+
+# ---------------------------------------------------------------------------
+# TOP-LEVEL METADATA — REQUIRED
+# ---------------------------------------------------------------------------
+
+profile:
+  name: "MINOR2 Immersive Design (WebXR Intro) — BOL Pathway (Year 2)"
+  description: >
+    Introductiemodule (4 weken) voor de minor Virtual en augmented reality.
+    Doelgroep: 2e-jaars Creative Software Developer (MBO 4) studenten met basiskennis
+    HTML, CSS en JavaScript (DOM, OOP, arrays, events). 
+    Doel: Studenten laten wennen aan ruimtelijk denken, 3D-interfaces en XYZ-coördinaten
+    voordat zij overstappen naar Unity. Er wordt gewerkt met WebXR via A-Frame om de 
+    leercurve laag te houden.
+    
+    Project Context (Thema: 'Immersed'): Na een recente strandexcursie om de zintuigen 
+    te prikkelen, bouwen de studenten een 'Zintuigelijke Strandervaring' in de browser. 
+    Ze leren 3D-objecten positioneren, basis animaties toepassen en JavaScript event-listeners 
+    (zoals click/gaze) toevoegen aan 3D-elementen om interactie (geluid, beweging, tekst) te triggeren.
+    
+    Randvoorwaarden: 100% studio-gestuurd onderwijs (exact 4 contacturen per week, 0 uur zelfstudie). 
+    Het testen van WebXR op een mobiele telefoon (via lokaal netwerk of GitHub Pages) wordt 
+    enkel aangeboden als bonus/uitdaging voor snelle studenten, zodat dit niet ten koste gaat 
+    van de kernkennis.
+
+# ---------------------------------------------------------------------------
+# COHORT DEMOGRAPHICS
+# ---------------------------------------------------------------------------
+
+year_level: 2
+student_pathway: "BOL"
+bpv_readiness: "bpv-ready"
+
+# ---------------------------------------------------------------------------
+# TECH STACK BASELINE
+# ---------------------------------------------------------------------------
+
+tech_stack:
+  primary_language: "JavaScript"
+  framework: "A-Frame"
+  frontend: "HTML5 / WebXR"
+  database: "N/A"
+  version_control: "Git (GitHub)"
+  editor: "VS Code"
+  
+  testing:
+    framework: "Handmatige testen in de browser (Desktop en optioneel WebXR emulator/mobiel)"
+    coverage_target: "N/A"
+
+  ci_cd: "N/A"
+  containerisation: "N/A"
+  deployment: "Live Server (VS Code) / Optioneel: GitHub Pages"
+
+# ---------------------------------------------------------------------------
+# KERNTAKEN EMPHASIS
+# ---------------------------------------------------------------------------
+
+kerntaken_emphasis:
+  P1-K1: "light"      # Planning — Korte oriëntatie op de zintuigelijke opdracht
+  P2-K1: "moderate"   # Designing — Ruimtelijke ontwerpprincipes (scale, position, rotation) vertaald naar het strandthema
+  P3-K1: "heavy"      # Building — Programmeren van 3D-logica, animaties en interactie-events met JavaScript
+  P4-K1: "light"      # Testing — Werkt de interactie in de desktop browser (en optioneel op mobiel)?
+
+# ---------------------------------------------------------------------------
+# STATIC CONSTRAINTS
+# ---------------------------------------------------------------------------
+
+grading_scale: "OVG"
+hardware_constraints: "BYOD laptop (Windows/macOS). Geen VR-brillen vereist in dit blok; testen gebeurt voornamelijk via de desktop browser met mobiel als bonus."
+
+# ---------------------------------------------------------------------------
+# ASSESSMENT PLAN
+# ---------------------------------------------------------------------------
+
+assessment:
+  practical_exams: 0
+  portfolio_items: 1 # Oplevering van de interactieve Zintuigelijke Strandervaring aan het eind van week 4
+  proeve_preparation: false
+  code_reviews_per_semester: 1
