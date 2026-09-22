@@ -23,6 +23,8 @@ from crewai import LLM, Agent
 from src.llm_factory import (
     EDUCATION_DIRECTOR,
     build_llm_for_agent,
+    resolve_max_iter,
+    resolve_max_rpm,
 )
 
 # ---------------------------------------------------------------------------
@@ -43,6 +45,8 @@ def create_education_director(
     *,
     llm: LLM | None = None,
     verbose: bool = False,
+    max_iter: int | None = None,
+    max_rpm: int | None = None,
 ) -> Agent:
     """Create the Education Director CrewAI agent.
 
@@ -132,8 +136,8 @@ def create_education_director(
         llm=llm,
         verbose=verbose,
         allow_delegation=True,
-        max_iter=5,
-        max_rpm=20,
+        max_iter=max_iter if max_iter is not None else resolve_max_iter(EDUCATION_DIRECTOR, 5),
+        max_rpm=max_rpm if max_rpm is not None else resolve_max_rpm(EDUCATION_DIRECTOR, 20),
     )
 
 

@@ -34,6 +34,8 @@ from src.exporters.tool import OutputExportTool
 from src.llm_factory import (
     THEORY_INSTRUCTOR,
     build_llm_for_agent,
+    resolve_max_iter,
+    resolve_max_rpm,
 )
 
 # ---------------------------------------------------------------------------
@@ -54,6 +56,8 @@ def create_theory_instructor(
     *,
     llm: LLM | None = None,
     verbose: bool = False,
+    max_iter: int | None = None,
+    max_rpm: int | None = None,
 ) -> Agent:
     """Create the Theory Instructor CrewAI agent.
 
@@ -153,8 +157,8 @@ def create_theory_instructor(
         llm=llm,
         verbose=verbose,
         allow_delegation=False,
-        max_iter=30,
-        max_rpm=20,
+        max_iter=max_iter if max_iter is not None else resolve_max_iter(THEORY_INSTRUCTOR, 30),
+        max_rpm=max_rpm if max_rpm is not None else resolve_max_rpm(THEORY_INSTRUCTOR, 20),
         tools=[export_tool],
     )
 

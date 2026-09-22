@@ -34,8 +34,12 @@ class TestHandleWriteDirectoryTree:
         self._original_tool_root = t._PROJECT_ROOT
         fw._PROJECT_ROOT = tmp_path.resolve()
         t._PROJECT_ROOT = tmp_path.resolve()
-        self._tmp = tmp_path
+        self._out = tmp_path
+        self._out = tmp_path / "output"
+        self._out.mkdir()
+        fw.OUTPUT_PATHS = fw.OutputPathConfig(root=tmp_path.resolve())
         yield
+        fw.OUTPUT_PATHS = fw.OutputPathConfig(root=self._original_fw_root)
         fw._PROJECT_ROOT = self._original_fw_root
         t._PROJECT_ROOT = self._original_tool_root
 
@@ -47,7 +51,7 @@ class TestHandleWriteDirectoryTree:
     def test_accepts_json_string_files(self) -> None:
         """A JSON-encoded string for 'files' is auto-parsed and written."""
         tool = self._make_tool()
-        base = str(self._tmp / "theory_json")
+        base = str(self._out / "theory_json")
         files_dict = {"artifact.html": "<h1>Hello</h1>", "walkthrough.sh": "#!/bin/bash\necho hi"}
         result = tool._handle_write_directory_tree(
             {
@@ -57,13 +61,13 @@ class TestHandleWriteDirectoryTree:
         )
         parsed = json.loads(result)
         assert parsed["status"] == "ok", f"Expected ok, got: {parsed}"
-        assert (self._tmp / "theory_json" / "artifact.html").read_text() == "<h1>Hello</h1>"
-        assert (self._tmp / "theory_json" / "walkthrough.sh").read_text() == "#!/bin/bash\necho hi"
+        assert (self._out / "theory_json" / "artifact.html").read_text() == "<h1>Hello</h1>"
+        assert (self._out / "theory_json" / "walkthrough.sh").read_text() == "#!/bin/bash\necho hi"
 
     def test_accepts_native_dict_files(self) -> None:
         """A native Python dict for 'files' still works (regression)."""
         tool = self._make_tool()
-        base = str(self._tmp / "theory_native")
+        base = str(self._out / "theory_native")
         result = tool._handle_write_directory_tree(
             {
                 "base_path": base,
@@ -72,14 +76,14 @@ class TestHandleWriteDirectoryTree:
         )
         parsed = json.loads(result)
         assert parsed["status"] == "ok", f"Expected ok, got: {parsed}"
-        assert (self._tmp / "theory_native" / "index.html").read_text() == "<p>Native</p>"
+        assert (self._out / "theory_native" / "index.html").read_text() == "<p>Native</p>"
 
     def test_rejects_invalid_json_string(self) -> None:
         """An unparseable JSON string returns an error."""
         tool = self._make_tool()
         result = tool._handle_write_directory_tree(
             {
-                "base_path": str(self._tmp / "bad_json"),
+                "base_path": str(self._out / "bad_json"),
                 "files": "not valid json {{{",
             }
         )
@@ -92,7 +96,7 @@ class TestHandleWriteDirectoryTree:
         tool = self._make_tool()
         result = tool._handle_write_directory_tree(
             {
-                "base_path": str(self._tmp / "no_files"),
+                "base_path": str(self._out / "no_files"),
             }
         )
         parsed = json.loads(result)
@@ -114,7 +118,7 @@ class TestHandleWriteDirectoryTree:
     def test_json_string_with_special_characters(self) -> None:
         """JSON-encoded files with special characters (newlines, quotes) are preserved."""
         tool = self._make_tool()
-        base = str(self._tmp / "special_chars")
+        base = str(self._out / "special_chars")
         content_with_specials = "const x = \"hello\";\nconst y = 'world';\n// comment"
         result = tool._handle_write_directory_tree(
             {
@@ -124,7 +128,7 @@ class TestHandleWriteDirectoryTree:
         )
         parsed = json.loads(result)
         assert parsed["status"] == "ok"
-        written = (self._tmp / "special_chars" / "code.js").read_text()
+        written = (self._out / "special_chars" / "code.js").read_text()
         assert written == content_with_specials
 
 
@@ -146,8 +150,11 @@ class TestHandleWriteFile:
         self._original_tool_root = t._PROJECT_ROOT
         fw._PROJECT_ROOT = tmp_path.resolve()
         t._PROJECT_ROOT = tmp_path.resolve()
-        self._tmp = tmp_path
+        self._out = tmp_path / "output"
+        self._out.mkdir()
+        fw.OUTPUT_PATHS = fw.OutputPathConfig(root=tmp_path.resolve())
         yield
+        fw.OUTPUT_PATHS = fw.OutputPathConfig(root=self._original_fw_root)
         fw._PROJECT_ROOT = self._original_fw_root
         t._PROJECT_ROOT = self._original_tool_root
 
@@ -157,7 +164,7 @@ class TestHandleWriteFile:
     def test_unwraps_json_encoded_content_string(self) -> None:
         """A JSON-encoded string for 'content' is unwrapped to the inner string."""
         tool = self._make_tool()
-        dest = str(self._tmp / "unwrapped.txt")
+        dest = str(self._out / "unwrapped.txt")
         result = tool._handle_write_file(
             {
                 "path": dest,
@@ -166,12 +173,12 @@ class TestHandleWriteFile:
         )
         parsed = json.loads(result)
         assert parsed["status"] == "ok", f"Expected ok, got: {parsed}"
-        assert (self._tmp / "unwrapped.txt").read_text() == "Hello from JSON string"
+        assert (self._out / "unwrapped.txt").read_text() == "Hello from JSON string"
 
     def test_preserves_raw_string_content(self) -> None:
         """A plain (non-JSON) string is written as-is (regression)."""
         tool = self._make_tool()
-        dest = str(self._tmp / "raw.txt")
+        dest = str(self._out / "raw.txt")
         result = tool._handle_write_file(
             {
                 "path": dest,
@@ -180,12 +187,12 @@ class TestHandleWriteFile:
         )
         parsed = json.loads(result)
         assert parsed["status"] == "ok", f"Expected ok, got: {parsed}"
-        assert (self._tmp / "raw.txt").read_text() == "Just a plain string, not JSON"
+        assert (self._out / "raw.txt").read_text() == "Just a plain string, not JSON"
 
     def test_preserves_json_object_as_string(self) -> None:
         """A JSON object (dict) passed as content is NOT unwrapped — it stays as a JSON string."""
         tool = self._make_tool()
-        dest = str(self._tmp / "obj.txt")
+        dest = str(self._out / "obj.txt")
         content = json.dumps({"key": "value"})
         result = tool._handle_write_file(
             {
@@ -197,7 +204,7 @@ class TestHandleWriteFile:
         assert parsed["status"] == "ok"
         # The content is a JSON string representing an object, so it should
         # NOT be unwrapped (only plain strings get unwrapped).
-        assert (self._tmp / "obj.txt").read_text() == content
+        assert (self._out / "obj.txt").read_text() == content
 
     def test_rejects_missing_path(self) -> None:
         """Missing 'path' parameter returns an error."""
@@ -216,7 +223,7 @@ class TestHandleWriteFile:
         tool = self._make_tool()
         result = tool._handle_write_file(
             {
-                "path": str(self._tmp / "missing.txt"),
+                "path": str(self._out / "missing.txt"),
             }
         )
         parsed = json.loads(result)
@@ -242,8 +249,11 @@ class TestRunDispatch:
         self._original_tool_root = t._PROJECT_ROOT
         fw._PROJECT_ROOT = tmp_path.resolve()
         t._PROJECT_ROOT = tmp_path.resolve()
-        self._tmp = tmp_path
+        self._out = tmp_path / "output"
+        self._out.mkdir()
+        fw.OUTPUT_PATHS = fw.OutputPathConfig(root=tmp_path.resolve())
         yield
+        fw.OUTPUT_PATHS = fw.OutputPathConfig(root=self._original_fw_root)
         fw._PROJECT_ROOT = self._original_fw_root
         t._PROJECT_ROOT = self._original_tool_root
 
@@ -253,7 +263,7 @@ class TestRunDispatch:
     def test_dispatches_write_directory_tree_with_json_files(self) -> None:
         """_run dispatches 'write-directory-tree' and handles JSON string files."""
         tool = self._make_tool()
-        base = str(self._tmp / "dispatched")
+        base = str(self._out / "dispatched")
         result = tool._run(
             command="write-directory-tree",
             base_path=base,
@@ -261,12 +271,12 @@ class TestRunDispatch:
         )
         parsed = json.loads(result)
         assert parsed["status"] == "ok", f"Expected ok, got: {parsed}"
-        assert (self._tmp / "dispatched" / "page.html").read_text() == "<h1>Dispatched</h1>"
+        assert (self._out / "dispatched" / "page.html").read_text() == "<h1>Dispatched</h1>"
 
     def test_dispatches_write_file_with_json_content(self) -> None:
         """_run dispatches 'write-file' and handles JSON-encoded content."""
         tool = self._make_tool()
-        dest = str(self._tmp / "dispatched_file.txt")
+        dest = str(self._out / "dispatched_file.txt")
         result = tool._run(
             command="write-file",
             path=dest,
@@ -274,7 +284,7 @@ class TestRunDispatch:
         )
         parsed = json.loads(result)
         assert parsed["status"] == "ok", f"Expected ok, got: {parsed}"
-        assert (self._tmp / "dispatched_file.txt").read_text() == "Dispatched content"
+        assert (self._out / "dispatched_file.txt").read_text() == "Dispatched content"
 
     def test_unknown_command_returns_error(self) -> None:
         """An unknown command returns an error."""

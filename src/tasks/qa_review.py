@@ -205,6 +205,18 @@ def create_qa_review_task(
         f"learning).\n"
         f"4. **How to fix it** (provide concrete guidance, not just "
         f"'fix this').\n\n"
+        f"### 🔴  CRITICAL: Delegated Agents MUST Write to the Correct Directory\n\n"
+        f"When you delegate a fix, you **MUST** instruct the coworker to use "
+        f"the **exact** `run_id` shown in the Labs Directory path above "
+        f'(e.g., `run_id="{run_id or "RUN_ID"}"`).  The coworker MUST use this '
+        f"`run_id` in ALL `write-labs` and `write-directory-tree` tool calls.\n\n"
+        f"❌ **WRONG:** using a made-up run_id like "
+        f'`run_id="2023-06-15_120000_Some_Random_Name"`\n'
+        f'✅ **CORRECT:** `run_id="{run_id or "RUN_ID"}"` '
+        f"(the run_id from the Labs Directory above)\n\n"
+        f"Using the wrong `run_id` causes files to be written to a completely "
+        f"different directory, making them invisible to this review. "
+        f"This is the #1 cause of 'I fixed it but the fix didn't appear.'\n\n"
         f"Do NOT attempt to fix the files yourself.  Your role is to "
         f"*review and delegate*, not to *rewrite*.  The Lab Developer "
         f"and Theory Instructor are responsible for implementing fixes "

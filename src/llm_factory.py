@@ -99,6 +99,17 @@ _KNOWN_ROLES: tuple[str, ...] = (
 # ---------------------------------------------------------------------------
 _PROPERTIES: tuple[str, ...] = ("MODEL", "TEMPERATURE", "TOP_P", "MAX_TOKENS")
 
+# Iteration / rate-limit properties — same 3-tier fallback chain,
+# but resolved via dedicated helpers so callers don't repeat
+# ``_resolve_numeric`` everywhere.  These are NOT in _PROPERTIES
+# because they map to Agent() constructor kwargs, not LLM() kwargs.
+_MAX_ITER_ENV: str = "MAX_ITER"
+_MAX_RPM_ENV: str = "MAX_RPM"
+
+# Cached defaults after env resolution (lazily populated).
+_iter_default: int | None = None
+_rpm_default: int | None = None
+
 # ---------------------------------------------------------------------------
 # Hardcoded defaults — the final fallback when nothing is configured.
 # These are sensible catch-all values; per-agent overrides (via env vars) are
@@ -163,6 +174,66 @@ def _resolve_numeric(
         return float(raw)
     except (ValueError, TypeError):
         return hardcoded_default
+
+
+def resolve_max_iter(agent_role: str, hardcoded_default: int) -> int:
+    """Resolve the ``max_iter`` value for *agent_role*.
+
+    Follows the same 3-tier fallback chain as ``build_llm_for_agent``:
+
+    1. ``AGENT_{ROLE}_MAX_ITER``  — per-agent override
+    2. ``AGENT_DEFAULT_MAX_ITER`` — agent-wide default
+    3. *hardcoded_default*         — caller-supplied fallback
+
+    Parameters
+    ----------
+    agent_role : str
+        Uppercase snake_case agent identifier (e.g. ``QA_REVIEWER``).
+    hardcoded_default : int
+        The value to use when no env var is set.
+
+    Returns
+    -------
+    int
+        The resolved iteration limit.
+    """
+    return int(
+        _resolve_numeric(
+            agent_role,
+            _MAX_ITER_ENV,
+            hardcoded_default=hardcoded_default,
+        )
+    )
+
+
+def resolve_max_rpm(agent_role: str, hardcoded_default: int) -> int:
+    """Resolve the ``max_rpm`` value for *agent_role*.
+
+    Same 3-tier fallback as :func:`resolve_max_iter`:
+
+    1. ``AGENT_{ROLE}_MAX_RPM``  — per-agent override
+    2. ``AGENT_DEFAULT_MAX_RPM`` — agent-wide default
+    3. *hardcoded_default*        — caller-supplied fallback
+
+    Parameters
+    ----------
+    agent_role : str
+        Uppercase snake_case agent identifier.
+    hardcoded_default : int
+        The value to use when no env var is set.
+
+    Returns
+    -------
+    int
+        The resolved requests-per-minute limit.
+    """
+    return int(
+        _resolve_numeric(
+            agent_role,
+            _MAX_RPM_ENV,
+            hardcoded_default=hardcoded_default,
+        )
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -252,7 +323,11 @@ def get_effective_config(agent_role: str) -> dict[str, object]:
     """Return the effective configuration dict for a single agent.
 
     This is the programmatic counterpart to list_agent_configs — useful
-    when you need the resolved values in code rather than printed to stdout.
+    when you need the resolved *LLM* values in code rather than printed.
+
+    Note: ``max_iter`` and ``max_rpm`` are Agent-level settings (not LLM
+    settings), resolved separately via :func:`resolve_max_iter` and
+    :func:`resolve_max_rpm`.
     """
     resolved_api_key: str = os.getenv("OPENROUTER_API_KEY") or os.getenv("API_KEY", "")
     api_key_status: str = "set" if resolved_api_key else "missing — authentication will fail"
@@ -304,12 +379,23 @@ def list_agent_configs() -> None:
     print(f"  API Key:              {status}")
     print()
 
-    print("-- Environment " + "-" * 42)
+    # --- LLM env vars ---
+    print("-- LLM Environment " + "-" * 41)
     for prop in _PROPERTIES:
         env_key = f"AGENT_DEFAULT_{prop}"
         value = os.getenv(env_key)
         label = value if value is not None else "(not set)"
         print(f"  {env_key:.<40} {label}")
+
+    print()
+
+    # --- Agent iteration / RPM env vars ---
+    print("-- Agent Runtime Limits (max_iter / max_rpm) " + "-" * 13)
+    for suffix in (_MAX_ITER_ENV, _MAX_RPM_ENV):
+        def_key = f"AGENT_DEFAULT_{suffix}"
+        def_val = os.getenv(def_key)
+        label = def_val if def_val is not None else "(not set — uses per-agent hardcoded default)"
+        print(f"  {def_key:.<40} {label}")
 
     print()
 
@@ -321,6 +407,12 @@ def list_agent_configs() -> None:
         print(f"  temperature:  {config['temperature']}")
         print(f"  top_p:        {config['top_p']}")
         print(f"  max_tokens:   {config['max_tokens']}")
+        # Show per-agent override status for iteration limits
+        for suffix in (_MAX_ITER_ENV, _MAX_RPM_ENV):
+            key = f"AGENT_{role}_{suffix}"
+            val = os.getenv(key)
+            tag = val if val is not None else "(not set)"
+            print(f"  {suffix.lower()}:    {tag}")
 
     print()
     print("=" * 60)

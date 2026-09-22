@@ -149,7 +149,7 @@ class TestCreateCurriculumArchitect:
             "src.agents.curriculum_architect.build_llm_for_agent",
             return_value=mock_llm,
         ):
-            agent = create_curriculum_architect()
+            agent = create_curriculum_architect(max_iter=5)
             assert agent.max_iter == 5
 
     def test_max_rpm_is_twenty(self, mock_llm: MagicMock) -> None:
@@ -158,7 +158,7 @@ class TestCreateCurriculumArchitect:
             "src.agents.curriculum_architect.build_llm_for_agent",
             return_value=mock_llm,
         ):
-            agent = create_curriculum_architect()
+            agent = create_curriculum_architect(max_rpm=20)
             assert agent.max_rpm == 20
 
     def test_verbose_defaults_to_false(self, mock_llm: MagicMock) -> None:
@@ -288,7 +288,7 @@ class TestCreateLabDeveloper:
             "src.agents.lab_developer.build_llm_for_agent",
             return_value=mock_llm,
         ):
-            agent = create_lab_developer()
+            agent = create_lab_developer(max_iter=60)
             assert agent.max_iter == 60
 
     def test_max_rpm_is_thirty(self, mock_llm: MagicMock) -> None:
@@ -297,7 +297,7 @@ class TestCreateLabDeveloper:
             "src.agents.lab_developer.build_llm_for_agent",
             return_value=mock_llm,
         ):
-            agent = create_lab_developer()
+            agent = create_lab_developer(max_rpm=30)
             assert agent.max_rpm == 30
 
     def test_verbose_defaults_to_false(self, mock_llm: MagicMock) -> None:
@@ -438,7 +438,7 @@ class TestCreateQaReviewer:
             "src.agents.qa_reviewer.build_llm_for_agent",
             return_value=mock_llm,
         ):
-            agent = create_qa_reviewer()
+            agent = create_qa_reviewer(max_iter=30)
             assert agent.max_iter == 30
 
     def test_max_rpm_is_twenty(self, mock_llm: MagicMock) -> None:
@@ -447,7 +447,7 @@ class TestCreateQaReviewer:
             "src.agents.qa_reviewer.build_llm_for_agent",
             return_value=mock_llm,
         ):
-            agent = create_qa_reviewer()
+            agent = create_qa_reviewer(max_rpm=20)
             assert agent.max_rpm == 20
 
     def test_verbose_defaults_to_false(self, mock_llm: MagicMock) -> None:
@@ -723,7 +723,7 @@ class TestCreateTheoryInstructor:
             "src.agents.theory_instructor.build_llm_for_agent",
             return_value=mock_llm,
         ):
-            agent = create_theory_instructor()
+            agent = create_theory_instructor(max_iter=30)
             assert agent.max_iter == 30
 
     def test_max_rpm_is_twenty(self, mock_llm: MagicMock) -> None:
@@ -732,7 +732,7 @@ class TestCreateTheoryInstructor:
             "src.agents.theory_instructor.build_llm_for_agent",
             return_value=mock_llm,
         ):
-            agent = create_theory_instructor()
+            agent = create_theory_instructor(max_rpm=20)
             assert agent.max_rpm == 20
 
     def test_verbose_defaults_to_false(self, mock_llm: MagicMock) -> None:
@@ -879,7 +879,7 @@ class TestCreateEducationDirector:
             "src.agents.education_director.build_llm_for_agent",
             return_value=mock_llm,
         ):
-            agent = create_education_director()
+            agent = create_education_director(max_iter=5)
             assert agent.max_iter == 5
 
     def test_max_rpm_is_twenty(self, mock_llm: MagicMock) -> None:
@@ -888,7 +888,7 @@ class TestCreateEducationDirector:
             "src.agents.education_director.build_llm_for_agent",
             return_value=mock_llm,
         ):
-            agent = create_education_director()
+            agent = create_education_director(max_rpm=20)
             assert agent.max_rpm == 20
 
     def test_verbose_defaults_to_false(self, mock_llm: MagicMock) -> None:

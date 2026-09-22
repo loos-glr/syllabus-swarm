@@ -59,13 +59,8 @@ class TestLayer1ConfigLoaderExists:
         import ast
         from pathlib import Path
 
-        config_loader_path = (
-            Path(__file__).resolve().parent.parent
-            / "src" / "config_loader.py"
-        )
-        assert config_loader_path.exists(), (
-            "src/config_loader.py (Layer 1) must exist"
-        )
+        config_loader_path = Path(__file__).resolve().parent.parent / "src" / "config_loader.py"
+        assert config_loader_path.exists(), "src/config_loader.py (Layer 1) must exist"
         source = config_loader_path.read_text()
         tree = ast.parse(source)
         layer4_imports: list[str] = []
@@ -100,9 +95,8 @@ class TestLayer1ConfigLoaderExists:
 
         from src.config_loader import CohortProfile
 
-        assert issubclass(CohortProfile, BaseModel), (
-            "CohortProfile must be a Pydantic BaseModel"
-        )
+        assert issubclass(CohortProfile, BaseModel), "CohortProfile must be a Pydantic BaseModel"
+
 
 # ---------------------------------------------------------------------------
 # Paths to the real config fixtures shipped with the project

@@ -203,6 +203,7 @@ def create_theory_task(
     course_name: str,
     syllabus_context: str | None = None,
     run_id: str | None = None,
+    tier: str | None = None,
     verbose: bool = False,
 ) -> Task:
     """Create a CrewAI Task that generates interactive theory artifacts.
@@ -222,6 +223,12 @@ def create_theory_task(
         When provided, it is injected into the task description so the agent
         can construct the correct ``base_path`` for ``write-directory-tree``
         tool calls.
+    tier : str or None
+        When set to a specific tier directory name (e.g. ``"tier1_foundations"``),
+        the task generates theory for that ONE tier only.  Used during
+        ``--resume-from`` to regenerate individual tiers.  When ``None`` (the
+        default), generates artifacts for all 3 tiers in one call
+        (backward-compatible behavior).
     verbose : bool
         Enable detailed task execution logging.
 
@@ -230,6 +237,59 @@ def create_theory_task(
     Task
         Fully-configured CrewAI Task ready to be assigned to a Crew.
     """
+    # ── Tier-specific labels ──────────────────────────────────────────
+    tier_labels: dict[str, str] = {
+        "tier1_foundations": "Tier 1 — Foundations",
+        "tier2_application": "Tier 2 — Application",
+        "tier3_architecture": "Tier 3 — Architecture",
+    }
+    tier_label: str | None = tier_labels.get(tier) if tier else None
+
+    # ── Per-tier format guide (narrowed when tier is set) ─────────────
+    tier_format_map: dict[str, str] = {
+        "tier1_foundations": (
+            "| Tier 1 — Foundations | Syntax, control flow, data structures, "
+            "basic OOP, algorithms | **Format A (HTML/JS)** — visualise sorting, "
+            "searching, recursion, or state transitions |"
+        ),
+        "tier2_application": (
+            "| Tier 2 — Application | APIs, data pipelines, CLI tools, testing, "
+            "databases | **Format B (Terminal Script)** — step-by-step "
+            "walkthrough of API calls, ETL flows, or CLI workflows |"
+        ),
+        "tier3_architecture": (
+            "| Tier 3 — Architecture | Microservices, Docker, CI/CD, system "
+            "design, observability | **Format C (Mermaid.js Markdown)** — "
+            "sequence diagrams, class diagrams, deployment topologies |"
+        ),
+    }
+
+    if tier and tier in tier_format_map:
+        format_guide: str = (
+            "## 🎨  Format Selection Guide\n\n"
+            f"For **{tier_label}**, use the recommended format below.  If the tier's "
+            "concept clearly fits a different format better, use your judgment:\n\n"
+            "| Tier | Typical Concepts | Recommended Format |\n"
+            "|------|-----------------|--------------------|\n"
+            f"{tier_format_map[tier]}\n\n"
+            "**Override rule:** If this tier's concept clearly fits a different "
+            "format better, use your judgment.  The table is a guideline, "
+            "not a straitjacket.\n"
+        )
+    else:
+        format_guide = _FORMAT_SELECTION_GUIDE
+
+    # ── Cross-tier coherence guardrail (only for per-tier calls) ──────
+    coherence_guardrail: str = (
+        "## 🔗 Cross-Tier Coherence (Per-Tier Mode)\n\n"
+        "Your theory artifact is for **{label} only**.  However, it should be "
+        "understandable in isolation.  When referencing concepts from earlier "
+        "tiers, add a brief 1-2 sentence inline explanation.  For example:\n\n"
+        '> "In Tier 1, you learned that vectors represent direction and '
+        'magnitude. Now in Tier 2, we use vectors to calculate..."\n\n'
+        "Do NOT assume the student has completed earlier tiers.  If this is "
+        "Tier 1, no cross-references are needed.\n"
+    )
     # ---- Build the description ------------------------------------------
     description_parts: list[str] = [
         f"Generate interactive theory artifacts for the following course:\n\n"
@@ -250,34 +310,59 @@ def create_theory_task(
             ctx = ctx[:4000] + "\n\n[... syllabus truncated for length ...]\n"
         description_parts.append(f"\n**Syllabus Context:**\n\n{ctx}\n")
 
-    description_parts.append(
-        f"\n\nYour task is to read the syllabus above, identify the core "
-        f"concept for each of the 3 tiers, and generate exactly ONE theory "
-        f"artifact per tier using the format most appropriate for the "
-        f"concept.\n\n"
-        f"{_FORMAT_SELECTION_GUIDE}\n\n"
-        f"{_ARTIFACT_REQUIREMENTS}\n\n"
-        f"{_TOOL_USAGE_MANDATE}\n"
-    )
+    # ── Task scope: all tiers or just one? ─────────────────────────────
+    if tier and tier_label:
+        description_parts.append(
+            f"\n\nYour task is to read the syllabus above, identify the core "
+            f"concept for **{tier_label}**, and generate exactly ONE theory "
+            f"artifact for this tier using the format most appropriate for "
+            f"the concept.\n\n"
+            f"{coherence_guardrail.format(label=tier_label)}\n\n"
+            f"{format_guide}\n\n"
+        )
+    else:
+        description_parts.append(
+            f"\n\nYour task is to read the syllabus above, identify the core "
+            f"concept for each of the 3 tiers, and generate exactly ONE theory "
+            f"artifact per tier using the format most appropriate for the "
+            f"concept.\n\n"
+            f"{format_guide}\n\n"
+        )
+
+    description_parts.append(f"{_ARTIFACT_REQUIREMENTS}\n\n{_TOOL_USAGE_MANDATE}\n")
 
     description = "".join(description_parts)
 
     # ---- Build the expected_output --------------------------------------
-    expected_output = (
-        "## 🔴 CRITICAL: You MUST use the `output_export_tool`\n\n"
-        'Use the `output_export_tool` with `command="write-directory-tree"` '
-        "to write ALL theory artifacts to disk.  Write exactly ONE artifact "
-        "per tier into the `theory/` subfolder of each tier's lab directory:\n\n"
-        "- `output/<run_id>/labs/tier1_foundations/theory/`\n"
-        "- `output/<run_id>/labs/tier2_application/theory/`\n"
-        "- `output/<run_id>/labs/tier3_architecture/theory/`\n\n"
-        "**Once all files are written**, produce a Markdown summary listing "
-        "each tier, the format chosen (A/B/C), the filename, and a one-line "
-        "description of the artifact.\n"
-    )
+    if tier:
+        expected_output = (
+            "## 🔴 CRITICAL: You MUST use the `output_export_tool`\n\n"
+            'Use the `output_export_tool` with `command="write-directory-tree"` '
+            "to write your theory artifact to disk.  Write exactly ONE artifact "
+            f"for **{tier_label}** into the `theory/` subfolder:\n\n"
+            f"- `output/<run_id>/labs/{tier}/theory/`\n\n"
+            "**Once the file is written**, produce a Markdown summary listing "
+            "the tier, the format chosen (A/B/C), the filename, and a one-line "
+            "description of the artifact.\n"
+        )
+    else:
+        expected_output = (
+            "## 🔴 CRITICAL: You MUST use the `output_export_tool`\n\n"
+            'Use the `output_export_tool` with `command="write-directory-tree"` '
+            "to write ALL theory artifacts to disk.  Write exactly ONE artifact "
+            "per tier into the `theory/` subfolder of each tier's lab directory:\n\n"
+            "- `output/<run_id>/labs/tier1_foundations/theory/`\n"
+            "- `output/<run_id>/labs/tier2_application/theory/`\n"
+            "- `output/<run_id>/labs/tier3_architecture/theory/`\n\n"
+            "**Once all files are written**, produce a Markdown summary listing "
+            "each tier, the format chosen (A/B/C), the filename, and a one-line "
+            "description of the artifact.\n"
+        )
 
     # ---- Compute the output file path -----------------------------------
-    if run_id:
+    if run_id and tier:
+        output_file: str = f"output/{run_id}/labs/{tier}/theory/README.md"
+    elif run_id:
         output_file: str = f"output/{run_id}/theory/README.md"
     else:
         output_file: str = "output/theory/README.md"
