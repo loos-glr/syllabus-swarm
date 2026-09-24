@@ -174,6 +174,18 @@ def build_cli_parser() -> argparse.ArgumentParser:
         ),
     )
 
+    parser.add_argument(
+        "--material-language",
+        default=None,
+        choices=["Dutch", "English"],
+        metavar="LANG",
+        help=(
+            "Language for ALL instructional materials: 'Dutch' (Nederlands) "
+            "or 'English'.  Overrides profile and school defaults.  "
+            "Default: Dutch."
+        ),
+    )
+
     return parser
 
 
@@ -461,7 +473,8 @@ def _run_intake(
     verbose: bool = False,
     pre_populated: CourseSpecification | None = None,
     prerequisites: str | None = None,
-) -> tuple[str, str, str, str, str | None, str | None, int | None, str | None]:
+    material_language_override: str | None = None,
+) -> tuple[str, str, str, str, str | None, str | None, int | None, str | None, str]:
     """Run the Intake Specialist to gather rich course context.
 
     Steps:
@@ -480,21 +493,24 @@ def _run_intake(
     pre_populated : CourseSpecification or None
         Pre-populated constraints from a cohort profile.  When provided,
         structured fields (grading_scale, student_pathway, year_level,
-        hardware_constraints) are used as fallback values if the LLM
-        synthesis does not populate them.
+        hardware_constraints, material_language) are used as fallback values
+        if the LLM synthesis does not populate them.
     prerequisites : str or None
         Optional prerequisite context from a previous course (via
         ``--builds-upon``).  When provided, injected into the question
         prompt so the Intake Specialist knows what students have already
         mastered and can tailor questions accordingly.
+    material_language_override : str or None
+        Explicit material language from CLI ``--material-language`` flag.
+        Takes highest priority over profile defaults and LLM output.
 
     Returns
     -------
-    tuple[str, str, str, str, str | None, str | None, int | None, str | None]
+    tuple[str, str, str, str, str | None, str | None, int | None, str | None, str]
         A ``(course_context, primary_language, questions, answers,
-        grading_scale, student_pathway, year_level, hardware_constraints)``
-        tuple.  *questions* and *answers* are empty strings when the
-        intake failed (e.g. LLM error, no user input).
+        grading_scale, student_pathway, year_level, hardware_constraints,
+        material_language)`` tuple.  *questions* and *answers* are empty
+        strings when the intake failed (e.g. LLM error, no user input).
     """
     intake_agent = get_intake_specialist(verbose=verbose)
 
@@ -509,6 +525,7 @@ def _run_intake(
         )
 
     # ── Build profile context for the question prompt ──────────────────
+# ── Apply material_language_override (CLI flag takes highest priority) ─\n    if material_language_override:\n        if pre_populated is None:\n            pre_populated = CourseSpecification(\n                course_context=\"\", primary_language=\"\"\n            )\n        pre_populated.material_language = material_language_override\n\n    # ── Build profile context for the question prompt ──────────────────
     skip_section = ""
     if pre_populated is not None:
         filled = _get_pre_populated_fields(pre_populated)
@@ -519,6 +536,7 @@ def _run_intake(
                 "student_pathway": "student pathway (BOL/BBL)",
                 "year_level": "year level",
                 "hardware_constraints": "hardware constraints",
+                "material_language": "material language (Dutch/English)",
             }
             for field in filled:
                 label = labels.get(field, field)
@@ -533,6 +551,12 @@ def _run_intake(
         if pre_populated.primary_language and pre_populated.primary_language not in ("", "Python"):
             skip_section += (
                 f"\n     • primary language: **{pre_populated.primary_language}** "
+                f"(pre-populated — skip)\n"
+            )
+# Also note material_language if pre-populated or overridden
+        if pre_populated.material_language and pre_populated.material_language != "Dutch":
+            skip_section += (
+                f"\n     • material language: **{pre_populated.material_language}** "
                 f"(pre-populated — skip)\n"
             )
 
@@ -553,6 +577,9 @@ def _run_intake(
             f"4. The specific schedule and time budget (number of weeks, "
             f"contact hours per week, self-study hours, and any known "
             f"disruptions like holidays or school trips)\n\n"
+            f"5. The preferred language for ALL instructional materials: "
+            f"Dutch (Nederlands) or English.  This affects the syllabus, "
+            f"theory artifacts, lab READMEs, code comments, and assessments.\n\n"
             f"{skip_section}\n"
             f"Output ONLY the questions — no preamble, no commentary, "
             f"no markdown formatting.  Number them 1, 2, 3, 4.  Keep each "
@@ -583,7 +610,7 @@ def _run_intake(
     except Exception as exc:
         print(f"\n⚠️  Intake Specialist failed to generate questions: {exc}")
         print("   Proceeding with bare course name as context.\n")
-        return f"Course Name: {course_name}", "Python", "", "", None, None, None, None
+        return f"Course Name: {course_name}", "Python", "", "", None, None, None, None, "Dutch"
 
     # ── Step 2: Display questions and capture answers ────────────────────
     if pre_populated is not None and _get_pre_populated_fields(pre_populated):
@@ -616,7 +643,7 @@ def _run_intake(
 
     if not user_answers:
         print("\n⚠️  No answers provided. Proceeding with bare course name.\n")
-        return f"Course Name: {course_name}", "Python", "", "", None, None, None, None
+        return f"Course Name: {course_name}", "Python", "", "", None, None, None, None, "Dutch"
 
     # ── Step 3: Synthesise course context ────────────────────────────────
     # Include pre-populated fields AND the full profile context in the
@@ -658,7 +685,7 @@ def _run_intake(
             f"{pre_pop_bonus}\n\n"
             f"Your task: Synthesise the course name, your questions, and "
             f"the user's answers into a structured ``CourseSpecification`` "
-            f"object with two fields:\n\n"
+            f"object with three fields:\n\n"
             f"1. ``course_context`` — A rich, structured text block "
             f"(plain text, NOT Markdown) containing:\n"
             f"   - The course name and a one-sentence summary\n"
@@ -679,10 +706,11 @@ def _run_intake(
             f"linters, and tooling used in the coding labs."
         ),
         expected_output=(
-            "A CourseSpecification object with two fields: "
-            "course_context (rich pedagogical context as plain text) and "
+            "A CourseSpecification object with three fields: "
+            "course_context (rich pedagogical context as plain text), "
             "primary_language (the exact programming language for labs, "
-            "e.g. 'JavaScript', 'Python')."
+            "e.g. 'JavaScript', 'Python'), and "
+            "material_language ('Dutch' or 'English')."
         ),
         output_pydantic=CourseSpecification,
         agent=intake_agent,
@@ -709,6 +737,7 @@ def _run_intake(
             student_pathway = spec.student_pathway
             year_level = spec.year_level
             hardware_constraints = spec.hardware_constraints
+            material_language = spec.material_language
         else:
             # Fallback: parse from raw text if pydantic output unavailable.
             course_context = (
@@ -719,6 +748,7 @@ def _run_intake(
             student_pathway = None
             year_level = None
             hardware_constraints = None
+            material_language = "Dutch"
 
         # Fall back to pre-populated values when the LLM didn't populate them.
         if pre_populated is not None:
@@ -730,10 +760,15 @@ def _run_intake(
                 year_level = pre_populated.year_level
             if hardware_constraints is None:
                 hardware_constraints = pre_populated.hardware_constraints
+            if material_language not in ("Dutch", "English"):
+                if pre_populated is not None and pre_populated.material_language:
+                    material_language = pre_populated.material_language
+                else:
+                    material_language = "Dutch"
 
         if not course_context:
             print("⚠️  Synthesis produced no output. Using bare course name.\n")
-            return f"Course Name: {course_name}", "Python", "", "", None, None, None, None
+            return f"Course Name: {course_name}", "Python", "", "", None, None, None, None, "Dutch"
 
         print(f"{'─' * 60}")
         print("📋  Course Context (sent to Curriculum Architect):")
@@ -751,12 +786,13 @@ def _run_intake(
             student_pathway,
             year_level,
             hardware_constraints,
+            material_language,
         )
 
     except Exception as exc:
         print(f"\n⚠️  Synthesis failed: {exc}")
         print("   Proceeding with bare course name as context.\n")
-        return f"Course Name: {course_name}", "Python", "", "", None, None, None, None
+        return f"Course Name: {course_name}", "Python", "", "", None, None, None, None, "Dutch"
 
 
 # ---------------------------------------------------------------------------
@@ -972,6 +1008,7 @@ def main(argv: list[str] | None = None) -> None:
     profile_path: str | None = args.profile
     load_session_path: str | None = args.load_session
     builds_upon: str | None = args.builds_upon
+    material_language_cli: str | None = args.material_language
 
     # Collapse the positional course_name list into a single string.
     parsed_course_name: str | None = (
@@ -1015,6 +1052,8 @@ def main(argv: list[str] | None = None) -> None:
             print(f"    Pre-populated: {', '.join(filled)}")
         if pre_populated.primary_language and pre_populated.primary_language not in ("", "Python"):
             print(f"    Primary language: {pre_populated.primary_language}")
+        if pre_populated.material_language:
+            print(f"    Material language: {pre_populated.material_language}")
 
     # --- 1a. --load-session path (bypass interactive intake) -------------
 
@@ -1040,6 +1079,9 @@ def main(argv: list[str] | None = None) -> None:
         course_name = session.course_name
         course_context = session.course_specification.course_context
         primary_language = session.course_specification.primary_language
+        material_language = getattr(
+            session.course_specification, "material_language", "Dutch"
+        )
 
         print(f"\n{'=' * 60}")
         print("  🐝  Syllabus Swarm")
@@ -1164,11 +1206,13 @@ def main(argv: list[str] | None = None) -> None:
             student_pathway,
             year_level,
             hardware_constraints,
+            material_language,
         ) = _run_intake(
             course_name,
             verbose=True,
             pre_populated=pre_populated,
             prerequisites=prereq_context,
+            material_language_override=material_language_cli,
         )
 
     # --- 2a. Auto-save intake session (Issue #9) -------------------------
@@ -1186,6 +1230,7 @@ def main(argv: list[str] | None = None) -> None:
                 student_pathway=student_pathway,
                 year_level=year_level,
                 hardware_constraints=hardware_constraints,
+                material_language=material_language,
             ),
             timestamp=datetime.now(UTC).isoformat(),
             run_id=run_id,
@@ -1203,6 +1248,7 @@ def main(argv: list[str] | None = None) -> None:
             course_context,
             course_name=course_name,
             primary_language=primary_language,
+            material_language=material_language,
             verbose=True,
             skip_labs=skip_labs,
             resume_dir=resume_dir,
