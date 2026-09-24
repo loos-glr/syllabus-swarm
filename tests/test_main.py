@@ -71,6 +71,7 @@ class TestCourseSpecification:
             "student_pathway": None,
             "year_level": None,
             "hardware_constraints": None,
+            "material_language": "Dutch",
         }
 
     def test_model_can_be_deserialized(self) -> None:

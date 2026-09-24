@@ -29,6 +29,7 @@ from __future__ import annotations
 
 import datetime
 from enum import Enum
+from typing import Literal
 
 from pydantic import BaseModel, Field
 
@@ -83,6 +84,14 @@ class CourseSpecification(BaseModel):
         description="Description of hardware/device constraints (e.g., BYOD, "
         "Chromebooks, thin clients).  When pre-populated from a profile, "
         "the Intake Specialist skips this question.",
+    )
+    material_language: Literal["Dutch", "English"] = Field(
+        default="Dutch",
+        description="The human language in which ALL instructional materials "
+        "(syllabi, theory, labs, READMEs, code comments, assessments) "
+        "will be written.  'Dutch' (Nederlands) or 'English'.  When "
+        "pre-populated from a profile, the Intake Specialist skips this "
+        "question.",
     )
 
 
