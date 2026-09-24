@@ -600,6 +600,7 @@ def run_syllabus_crew(
     *,
     course_name: str = "",
     primary_language: str = "Python",
+    material_language: str = "Dutch",
     verbose: bool = False,
     architect_agent: Agent | None = None,
     lab_dev_agent: Agent | None = None,
@@ -763,6 +764,7 @@ def run_syllabus_crew(
             agent=architect,
             course_name=course_name,
             course_context=course_context,
+            material_language=material_language,
         )
 
         try:
@@ -810,6 +812,7 @@ def run_syllabus_crew(
                 agent=education_director,
                 course_name=course_name,
                 syllabus_context=syllabus_raw,
+                material_language=material_language,
                 verbose=verbose,
             )
 
@@ -885,6 +888,7 @@ def run_syllabus_crew(
                     syllabus_context=syllabus_raw,
                     run_id=_active_run_id,
                     tier=tier_dir_name,
+                    material_language=material_language,
                     verbose=verbose,
                 )
 
@@ -980,6 +984,7 @@ def run_syllabus_crew(
                     language=primary_language,
                     run_id=_active_run_id,
                     tier=tier_name,
+                    material_language=material_language,
                     verbose=verbose,
                 )
 
@@ -1111,6 +1116,7 @@ def run_syllabus_crew(
                 agent=qa_reviewer,
                 course_name=course_name,
                 run_id=_active_run_id,
+                material_language=material_language,
                 lab_developer_role=lab_dev.role if lab_dev is not None else None,
                 theory_instructor_role=(
                     theory_instructor.role if theory_instructor is not None else None
