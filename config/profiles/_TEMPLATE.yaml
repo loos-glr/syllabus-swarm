@@ -163,6 +163,12 @@ grading_scale: "OVG"
 # is viable (e.g. Docker may not work on school-managed thin clients).
 hardware_constraints: "BYOD laptop (Windows/macOS/Linux), 8 GB+ RAM, Chrome-based browsers preferred."
 
+# Material language for ALL generated instructional materials.
+# Options: "Dutch" (Nederlands) or "English".
+# Injected into CourseSpecification → Intake Specialist skips this.
+# Default: "Dutch" (set in school_defaults.yaml).
+material_language: "Dutch"
+
 # ---------------------------------------------------------------------------
 # ASSESSMENT PLAN
 # ---------------------------------------------------------------------------

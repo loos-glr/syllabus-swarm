@@ -21,6 +21,12 @@ organisation:
   country: "NL"
   language_of_instruction: "nl"
 
+# --- Material Language --------------------------------------------------------
+# The default human language for ALL instructional materials (syllabi, theory
+# artifacts, lab READMEs, code comments, assessments, reviews).
+# Options: "Dutch" (Nederlands) or "English".
+material_language: "Dutch"
+
 # --- Grading Scale -----------------------------------------------------------
 # Dutch MBO uses O/V/G (Onvoldoende / Voldoende / Goed).
 # O = Insufficient  (< 5.5 on a 1-10 scale)

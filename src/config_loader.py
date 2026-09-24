@@ -66,6 +66,10 @@ class CohortProfile(BaseModel):
         default=None,
         description="Hardware constraint description or dict.",
     )
+    material_language: str | None = Field(
+        default=None,
+        description="Material language: 'Dutch' or 'English'.",
+    )
     tech_stack: dict = Field(
         default_factory=dict,
         description="Technology stack configuration.",
@@ -199,7 +203,7 @@ def inject_profile(
     profile: dict,
 ) -> CourseSpecification:
     """Inject pre-populated profile values into a CourseSpecification."""
-    for key in ("grading_scale", "student_pathway", "year_level", "hardware_constraints"):
+    for key in ("grading_scale", "student_pathway", "year_level", "hardware_constraints", "material_language"):
         if key in profile and profile[key] is not None:
             current = getattr(spec, key)
             if current is None:
