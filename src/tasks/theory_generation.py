@@ -204,6 +204,7 @@ def create_theory_task(
     syllabus_context: str | None = None,
     run_id: str | None = None,
     tier: str | None = None,
+    material_language: str = "Dutch",
     verbose: bool = False,
 ) -> Task:
     """Create a CrewAI Task that generates interactive theory artifacts.
@@ -292,6 +293,9 @@ def create_theory_task(
     )
     # ---- Build the description ------------------------------------------
     description_parts: list[str] = [
+        f"**🌐 LANGUAGE: ALL output (theory artifacts, README files, inline text, "
+        f"UI labels in HTML, terminal script comments, Mermaid diagram labels) MUST "
+        f"be written in {material_language}.**\n\n"
         f"Generate interactive theory artifacts for the following course:\n\n"
         f"**Course Name:** {course_name}\n",
     ]

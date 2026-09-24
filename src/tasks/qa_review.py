@@ -35,6 +35,7 @@ def create_qa_review_task(
     run_id: str | None = None,
     lab_developer_role: str | None = None,
     theory_instructor_role: str | None = None,
+    material_language: str = "Dutch",
     verbose: bool = False,
 ) -> Task:
     """Create a CrewAI Task that performs QA review of generated lab and theory files.
@@ -75,6 +76,8 @@ def create_qa_review_task(
 
     # ── Build the description ──────────────────────────────────────────
     description = (
+        f"**🌐 LANGUAGE: ALL output (QA report, findings, delegation instructions) "
+        f"MUST be written in {material_language}.**\n\n"
         f"## QA Review — Generated Labs & Theory for: {course_name}\n\n"
         f"**Labs Directory:** `{labs_dir}`\n\n"
         f"---\n\n"

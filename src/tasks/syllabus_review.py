@@ -33,6 +33,7 @@ def create_syllabus_review_task(
     agent: Agent,
     course_name: str,
     syllabus_context: str,
+    material_language: str = "Dutch",
     verbose: bool = False,
 ) -> Task:
     """Create a CrewAI Task that performs a feasibility audit of a syllabus.
@@ -55,6 +56,8 @@ def create_syllabus_review_task(
     """
     # ── Build the description ──────────────────────────────────────────
     description = (
+        f"**🌐 LANGUAGE: ALL output (audit report, findings, recommendations) MUST "
+        f"be written in {material_language}.**\n\n"
         f"## Feasibility Audit — Syllabus for: {course_name}\n\n"
         f"---\n\n"
         f"### Your Task\n\n"

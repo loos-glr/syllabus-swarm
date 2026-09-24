@@ -145,6 +145,7 @@ def create_syllabus_generation_task(
     course_duration: str | None = None,
     target_audience: str | None = None,
     human_feedback: str | None = None,
+    material_language: str = "Dutch",
     verbose: bool = False,
 ) -> Task:
     """Create a CrewAI Task that generates a Humanics-aligned syllabus.
@@ -177,6 +178,9 @@ def create_syllabus_generation_task(
     """
     # ---- Build the description ------------------------------------------
     description_parts: list[str] = [
+        f"**🌐 LANGUAGE: ALL output (syllabus content, headings, descriptions, "
+        f"learning objectives, module breakdowns, assessment descriptions) MUST "
+        f"be written in {material_language}.**\n\n"
         f"Generate a detailed, vocational course syllabus for the "
         f"following course:\n\n"
         f"**Course Name:** {course_name}\n",
