@@ -120,7 +120,7 @@ _rpm_default: int | None = None
 # the recommended path.  Agent modules MUST NOT hardcode model IDs — they
 # always delegate to build_llm_for_agent().
 # ---------------------------------------------------------------------------
-_DEFAULT_MODEL: str = "deepseek/deepseek-v4-pro"
+_DEFAULT_MODEL: str = "openrouter/deepseek/deepseek-v4-pro"
 _DEFAULT_TEMPERATURE: float = 0.2
 _DEFAULT_TOP_P: float = 0.1
 _DEFAULT_MAX_TOKENS: int = 8192

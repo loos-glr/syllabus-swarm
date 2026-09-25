@@ -37,13 +37,13 @@ from src.llm_factory import (
 
 # ---------------------------------------------------------------------------
 # Expected hardcoded defaults (tier 4) — mirrored from src/llm_factory.py.
-# NOTE: crewai.LLM strips the provider prefix from model strings (e.g.
-# "deepseek/deepseek-v4-pro" becomes "deepseek-v4-pro").  Tests that inspect the
-# raw resolved value use get_effective_config(); tests that inspect the
-# constructed LLM use the stripped form.
+# NOTE: crewai.LLM strips the "openrouter/" provider prefix from model strings
+# (e.g. "openrouter/deepseek/deepseek-v4-pro" becomes "deepseek/deepseek-v4-pro").
+# Tests that inspect the raw resolved value use get_effective_config(); tests that
+# inspect the constructed LLM use the stripped form.
 # ---------------------------------------------------------------------------
-HARDCODED_MODEL: str = "deepseek/deepseek-v4-pro"
-HARDCODED_MODEL_STRIPPED: str = "deepseek-v4-pro"
+HARDCODED_MODEL: str = "openrouter/deepseek/deepseek-v4-pro"
+HARDCODED_MODEL_STRIPPED: str = "deepseek/deepseek-v4-pro"
 HARDCODED_TEMPERATURE: float = 0.2
 HARDCODED_TOP_P: float = 0.1
 HARDCODED_MAX_TOKENS: int = 8192
