@@ -159,6 +159,7 @@ def create_theory_instructor(
         allow_delegation=False,
         max_iter=max_iter if max_iter is not None else resolve_max_iter(THEORY_INSTRUCTOR, 30),
         max_rpm=max_rpm if max_rpm is not None else resolve_max_rpm(THEORY_INSTRUCTOR, 20),
+        max_retry_limit=5,
         tools=[export_tool],
     )
 

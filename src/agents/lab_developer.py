@@ -131,6 +131,7 @@ def create_lab_developer(
         allow_delegation=False,
         max_iter=max_iter if max_iter is not None else resolve_max_iter(LAB_DEVELOPER, 60),
         max_rpm=max_rpm if max_rpm is not None else resolve_max_rpm(LAB_DEVELOPER, 30),
+        max_retry_limit=5,
         tools=[export_tool],
     )
 
