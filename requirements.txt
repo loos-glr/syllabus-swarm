@@ -11,7 +11,7 @@
 # Upgrade:  pip install --upgrade -r requirements.txt
 
 # --- AI Agent Framework ---
-crewai==1.15.17
+crewai==1.15.22
 
 # --- LLM Chains & Orchestration ---
 langchain==1.3.16
@@ -32,7 +32,7 @@ litellm==1.97.0
 python-dotenv==1.2.3
 
 # --- CrewAI Tools (file reading for QA Reviewer) ---
-crewai-tools==1.15.17
+crewai-tools==1.15.22
 
 # --- Testing ---
 pytest==8.4.2
