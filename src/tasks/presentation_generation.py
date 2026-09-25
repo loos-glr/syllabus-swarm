@@ -14,6 +14,8 @@ from __future__ import annotations
 
 from crewai import Agent, Task
 
+from src.exporters.glr_marp_theme import generate_marp_css
+
 _PRESENTATION_STRUCTURE: str = (
     "## 📐  Presentation Structure Requirements\n\n"
     "Generate Marp Markdown following **Gagné's 9 instructional events** "
@@ -63,8 +65,7 @@ _PRESENTATION_STRUCTURE: str = (
     "- Full explanation of the concept (what the teacher says aloud).\n"
     "- Estimated timing for that slide.\n"
     "- Transition cues to the next slide.\n"
-    "- Answers/keys for exercises.\n\n"
-    "Include Marp frontmatter (theme, paginate, size: 16:9).\n"
+    "- Answers/keys for exercises.\n"
 )
 
 _TOOL_USAGE_MANDATE: str = (
@@ -108,6 +109,50 @@ def create_presentation_task(
             "- Slides, titles, bullets, and speaker notes in English.\n"
         )
 
+    # ── GLR Design System Directive ─────────────────────────────────
+    marp_css = generate_marp_css()
+    glr_design_directive = (
+        "\n\n## 🎨  GLR MEDIA CREATIVE — BRAND DESIGN SYSTEM (NON-NEGOTIABLE)\n\n"
+        "**CRITICAL: Replace `theme: uncover` with the EXACT frontmatter below.**\n\n"
+        "Every presentation deck MUST use this Marp frontmatter:\n\n"
+        "```yaml\n"
+        "---\n"
+        "marp: true\n"
+        "paginate: true\n"
+        "size: 16:9\n"
+        "style: |\n"
+        f"{marp_css}"
+        "---\n"
+        "```\n\n"
+        "### GLR Colour Rules (CRITICAL)\n"
+        "- **Primary signal green:** `#A6E22E` / `#76B800` — use for buttons, "
+        "badges, key highlights, ``.glr-badge``, ``.glr-marquee``\n"
+        "- **Primary black:** `#000000` — headings, borders, dark cards (``.glr-card-dark``)\n"
+        "- **Primary white:** `#FFFFFF` — light cards (``.glr-card``), text on dark\n"
+        "- **Accent blue:** `#002BFF` — ``.humanics-d`` tags, tertiary links\n"
+        "- **NEVER wash out green** — always pair against solid black or white\n"
+        "- **0px border-radius on EVERYTHING** — buttons, cards, badges, code blocks\n"
+        "- **Hard shadows only** — no blur/glow; use ``box-shadow: 4px 4px 0px #000``\n\n"
+        "### GLR Typography\n"
+        "- **Headings:** ``Space Grotesk`` — geometric, angular, bold. H1 48px/700, "
+        "H2 32px/600, H3 24px/600\n"
+        "- **Body:** ``Hanken Grotesk`` — clean, neutral, readable. 16px/400\n"
+        "- **Labels:** ``Space Grotesk`` uppercase, wide letter-spacing (``label-lg``, ``label-md``)\n"
+        "- **Code:** ``Space Grotesk`` 11px/700, black background with lime text\n\n"
+        "### GLR Component Classes (USE THESE)\n"
+        "- ``.glr-btn-primary`` — lime button with black border, 0px radius\n"
+        "- ``.glr-card`` — white card, 1px black border, 0px radius\n"
+        "- ``.glr-card-dark`` — black card with lime accents\n"
+        "- ``.glr-badge`` / ``.glr-badge-active`` / ``.glr-badge-outline``\n"
+        "- ``.glr-marquee`` — lime banner with black text\n"
+        "- ``.glr-media-frame`` — image container with GLR dimension marks\n"
+        "- ``.columns`` / ``.columns-3`` — grid layouts\n\n"
+        "### Humanics Tags (GLR Palette)\n"
+        "- ``[T]`` Technological → green (``.humanics-t``)\n"
+        "- ``[D]`` Data → ultramarine blue (``.humanics-d``)\n"
+        "- ``[H]`` Human → black (``.humanics-h``)\n"
+    )
+
     description = (
         f"# Presentation Generation Task\n\n"
         f"**Course:** {course_name}\n"
@@ -117,6 +162,7 @@ def create_presentation_task(
         f"## 📖  Syllabus Context\n\n"
         f"```\n{syllabus_context}\n```\n\n"
         f"{_PRESENTATION_STRUCTURE}\n\n"
+        f"{glr_design_directive}\n\n"
         f"{_TOOL_USAGE_MANDATE}"
         f"{language_directive}"
     )

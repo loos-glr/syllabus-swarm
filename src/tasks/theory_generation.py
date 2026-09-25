@@ -336,6 +336,42 @@ def create_theory_task(
 
     description_parts.append(f"{_ARTIFACT_REQUIREMENTS}\n\n{_TOOL_USAGE_MANDATE}\n")
 
+    # ── GLR Design System Directive ─────────────────────────────────
+    glr_design = (
+        "\n## 🎨  GLR MEDIA CREATIVE — DESIGN SYSTEM (NON-NEGOTIABLE)\n\n"
+        "**ALL generated artifacts (HTML, Markdown, terminal scripts) MUST carry "
+        "the GLR brand identity of Grafisch Lyceum Rotterdam.**\n\n"
+        "### For Format A (HTML/JS artifacts):\n"
+        "- **CSS base:** Always include inline `<style>` with:\n"
+        "  - ``@import url('https://fonts.googleapis.com/css2?"
+        "family=Space+Grotesk:wght@400;500;600;700&"
+        "family=Hanken+Grotesk:wght@400;500;600;700&display=swap');``\n"
+        "  - ``body { font-family: 'Hanken Grotesk', sans-serif; background: #faf9fd; "
+        "color: #000; }``\n"
+        "  - Headings: ``h1,h2,h3 { font-family: 'Space Grotesk', sans-serif; }``\n"
+        "  - All elements: ``border-radius: 0;`` (NO rounded corners)\n\n"
+        "- **Colour palette:**\n"
+        "  - Primary green: ``#76B800`` / ``#A6E22E`` — buttons, badges, highlights\n"
+        "  - Primary black: ``#000000`` — text, borders, dark containers\n"
+        "  - Primary white: ``#FFFFFF`` — cards, light backgrounds\n"
+        "  - Accent blue: ``#002BFF`` — links, Data [D] tags\n"
+        "  - **NEVER wash out green** — always pair against solid black or white\n\n"
+        "- **Buttons:** Green bg (`#76B800`), black text, 1px black border, 0px radius, "
+        "uppercase Space Grotesk. Hover: black bg, lime (`#A6E22E`) text, "
+        "hard offset shadow ``3px 3px 0 #A6E22E``.\n"
+        "- **Cards:** White bg, 1px black border, 0px radius. Dark variant: black bg, "
+        "white text, lime accent border.\n"
+        "- **Badges:** Black bg, lime text, Space Grotesk 11px/700, uppercase, wide "
+        "letter-spacing, 0px radius.\n"
+        "- **Code blocks:** Black bg, lime monospace text, 0px radius.\n"
+        "- **Shadows:** ONLY hard offset (``box-shadow: 4px 4px 0 #000``). "
+        "NO blur/glow.\n"
+        "- **Borders:** 1px solid black or ``#E5E7EB`` for structural separation.\n"
+        "- **Interactive elements:** Hover = colour inversion (green→black, "
+        "black→green).\n"
+    )
+    description_parts.append(glr_design)
+
     description = "".join(description_parts)
 
     # ── Inject human feedback (HITL loop) ───────────────────────────
