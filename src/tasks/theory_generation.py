@@ -205,6 +205,7 @@ def create_theory_task(
     run_id: str | None = None,
     tier: str | None = None,
     material_language: str = "Dutch",
+    human_feedback: str | None = None,
     verbose: bool = False,
 ) -> Task:
     """Create a CrewAI Task that generates interactive theory artifacts.
@@ -336,6 +337,17 @@ def create_theory_task(
     description_parts.append(f"{_ARTIFACT_REQUIREMENTS}\n\n{_TOOL_USAGE_MANDATE}\n")
 
     description = "".join(description_parts)
+
+    # ── Inject human feedback (HITL loop) ───────────────────────────
+    if human_feedback:
+        description += (
+            f"\n\n## ⚠️ Human Feedback (Instructor Review)\n\n"
+            f"The following feedback was provided by a human reviewer "
+            f"and MUST be addressed in this iteration:\n\n"
+            f"{human_feedback}\n\n"
+            f"Please revise the theory artifact to incorporate this feedback "
+            f"while maintaining all other requirements.\n"
+        )
 
     # ---- Build the expected_output --------------------------------------
     if tier:

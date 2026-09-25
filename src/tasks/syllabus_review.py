@@ -34,6 +34,7 @@ def create_syllabus_review_task(
     course_name: str,
     syllabus_context: str,
     material_language: str = "Dutch",
+    human_feedback: str | None = None,
     verbose: bool = False,
 ) -> Task:
     """Create a CrewAI Task that performs a feasibility audit of a syllabus.
@@ -194,6 +195,17 @@ def create_syllabus_review_task(
         f"mathematically sound, workload-appropriate, and suitable for "
         f"MBO4 students.  Approved to proceed to Theory and Lab generation.**'\n"
     )
+
+    # ── Inject human feedback (HITL loop) ───────────────────────────
+    if human_feedback:
+        description += (
+            f"\n\n## ⚠️ Human Feedback (Instructor Review)\n\n"
+            f"The following feedback was provided by a human reviewer "
+            f"and MUST be addressed in this iteration:\n\n"
+            f"{human_feedback}\n\n"
+            f"Please revise the audit to incorporate this feedback "
+            f"while maintaining all other requirements.\n"
+        )
 
     expected_output = (
         "A comprehensive Markdown Feasibility Audit Report with "

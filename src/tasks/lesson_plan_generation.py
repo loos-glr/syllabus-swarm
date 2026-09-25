@@ -49,6 +49,7 @@ def create_lesson_plan_task(
     module_name: str = "",
     run_id: str | None = None,
     material_language: str = "Dutch",
+    human_feedback: str | None = None,
     verbose: bool = False,
 ) -> Task:
     """Create a CrewAI Task that generates a lesson plan for a module."""
@@ -84,6 +85,17 @@ def create_lesson_plan_task(
         f"{_TOOL_USAGE_MANDATE}"
         f"{language_directive}"
     )
+
+    # ── Inject human feedback (HITL loop) ───────────────────────────
+    if human_feedback:
+        description += (
+            f"\n\n## ⚠️ Human Feedback (Instructor Review)\n\n"
+            f"The following feedback was provided by a human reviewer "
+            f"and MUST be addressed in this iteration:\n\n"
+            f"{human_feedback}\n\n"
+            f"Please revise the lesson plan to incorporate this feedback "
+            f"while maintaining all other requirements.\n"
+        )
 
     safe_module = module_name.replace(" ", "_").replace("-", "_").lower() if module_name else "module"
     out_prefix = (
