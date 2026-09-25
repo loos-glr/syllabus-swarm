@@ -1125,34 +1125,50 @@ def main(argv: list[str] | None = None) -> None:
 
         # Generate a fresh run_id for this pipeline run.
         safe_name = _sanitize_filename(course_name)
-        run_id = generate_run_id(safe_name)
 
-        # --- 2. Run the crew ---------------------------------------------
-        try:
-            result = run_syllabus_crew(
-                course_context,
-                course_name=course_name,
-                primary_language=primary_language,
-                verbose=True,
-                skip_labs=skip_labs,
-                skip_lesson_plans=skip_lesson_plans,
-                skip_presentations=skip_presentations,
-                run_id=run_id,
-            )
-        except RuntimeError as exc:
-            print(f"\n❌  Fatal Runtime Error: {exc}", file=sys.stderr)
-            print(
-                "   → Check that OPENROUTER_API_KEY is set in .env.",
-                file=sys.stderr,
-            )
-            sys.exit(2)
-        except Exception as exc:
-            print(f"\n❌  Fatal Unexpected Error: {exc}", file=sys.stderr)
-            sys.exit(3)
+        # ── HITL Feedback Loop ─────────────────────────────────────────
+        human_feedback: str | None = None
+        while True:
+            # Each feedback iteration gets a NEW run_id for version preservation
+            run_id = generate_run_id(safe_name)
+            run_dir = OUTPUT_ROOT / run_id
+            run_dir.mkdir(parents=True, exist_ok=True)
 
-        # --- 3. Print summary --------------------------------------------
-        _print_summary(result, course_name)
-        return
+            try:
+                result = run_syllabus_crew(
+                    course_context,
+                    course_name=course_name,
+                    primary_language=primary_language,
+                    material_language=material_language,
+                    verbose=True,
+                    skip_labs=skip_labs,
+                    skip_lesson_plans=skip_lesson_plans,
+                    skip_presentations=skip_presentations,
+                    human_feedback=human_feedback,
+                    run_id=run_id,
+                )
+            except RuntimeError as exc:
+                print(f"\n❌  Fatal Runtime Error: {exc}", file=sys.stderr)
+                print(
+                    "   → Check that OPENROUTER_API_KEY is set in .env.",
+                    file=sys.stderr,
+                )
+                sys.exit(2)
+            except Exception as exc:
+                print(f"\n❌  Fatal Unexpected Error: {exc}", file=sys.stderr)
+                sys.exit(3)
+
+            action, feedback_text = prompt_for_feedback()
+            if action == "APPROVE":
+                _print_summary(result, course_name)
+                return
+            elif action == "QUIT":
+                print("\n  👋  Discarding — exiting.\n")
+                return
+            else:  # FEEDBACK
+                human_feedback = feedback_text
+                print("\n  🔄  Feedback received. Starting new iteration...\n")
+        # ── End HITL Loop ──────────────────────────────────────────────
 
     # --- 1b. Normal intake flow ------------------------------------------
 
@@ -1264,33 +1280,56 @@ def main(argv: list[str] | None = None) -> None:
         except OSError as exc:
             print(f"⚠️  Could not save intake session: {exc}\n")
 
-    # --- 3. Run the crew -------------------------------------------------
-    try:
-        result = run_syllabus_crew(
-            course_context,
-            course_name=course_name,
-            primary_language=primary_language,
-            material_language=material_language,
-            verbose=True,
-            skip_labs=skip_labs,
-            skip_lesson_plans=skip_lesson_plans,
-            skip_presentations=skip_presentations,
-            resume_dir=resume_dir,
-            run_id=run_id,
-        )
-    except RuntimeError as exc:
-        print(f"\n❌  Fatal Runtime Error: {exc}", file=sys.stderr)
-        print(
-            "   → Check that OPENROUTER_API_KEY is set in .env.",
-            file=sys.stderr,
-        )
-        sys.exit(2)
-    except Exception as exc:
-        print(f"\n❌  Fatal Unexpected Error: {exc}", file=sys.stderr)
-        sys.exit(3)
+    # --- 3. Run the crew (with HITL feedback loop) ---------------------------
+    human_feedback: str | None = None
+    first_run = True
+    while True:
+        if not first_run:
+            # Feedback iteration: fresh run_id, no resume_dir
+            safe_name = _sanitize_filename(course_name)
+            run_id = generate_run_id(safe_name)
+            run_dir = OUTPUT_ROOT / run_id
+            run_dir.mkdir(parents=True, exist_ok=True)
+            _current_resume_dir = None
+        else:
+            _current_resume_dir = resume_dir
 
-    # --- 4. Print summary ------------------------------------------------
-    _print_summary(result, course_name)
+        try:
+            result = run_syllabus_crew(
+                course_context,
+                course_name=course_name,
+                primary_language=primary_language,
+                material_language=material_language,
+                verbose=True,
+                skip_labs=skip_labs,
+                skip_lesson_plans=skip_lesson_plans,
+                skip_presentations=skip_presentations,
+                human_feedback=human_feedback,
+                resume_dir=_current_resume_dir,
+                run_id=run_id,
+            )
+        except RuntimeError as exc:
+            print(f"\n❌  Fatal Runtime Error: {exc}", file=sys.stderr)
+            print(
+                "   → Check that OPENROUTER_API_KEY is set in .env.",
+                file=sys.stderr,
+            )
+            sys.exit(2)
+        except Exception as exc:
+            print(f"\n❌  Fatal Unexpected Error: {exc}", file=sys.stderr)
+            sys.exit(3)
+
+        action, feedback_text = prompt_for_feedback()
+        if action == "APPROVE":
+            _print_summary(result, course_name)
+            return
+        elif action == "QUIT":
+            print("\n  👋  Discarding — exiting.\n")
+            return
+        else:  # FEEDBACK
+            human_feedback = feedback_text
+            first_run = False
+            print("\n  🔄  Feedback received. Starting new iteration...\n")
 
 
 if __name__ == "__main__":
