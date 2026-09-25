@@ -17,6 +17,10 @@ from src.exporters.manifest import (
     ManifestData,
     update_output_manifest,
 )
+from src.exporters.glr_marp_theme import (
+    generate_marp_css,
+    get_marp_frontmatter,
+)
 
 __all__ = [
     # file_writer
@@ -34,4 +38,7 @@ __all__ = [
     "ArtifactSummary",
     "ManifestData",
     "update_output_manifest",
+    # glr_marp_theme
+    "generate_marp_css",
+    "get_marp_frontmatter",
 ]
