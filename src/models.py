@@ -384,3 +384,147 @@ class GenerationState(BaseModel):
         default="incomplete",
         description="QA review state: 'complete' or 'incomplete'.",
     )
+    lesson_plan: dict[str, str] = Field(
+        default_factory=dict,
+        description="Per-module lesson plan generation state keyed by module name. "
+        "Values are 'complete', 'incomplete', or 'failed'.",
+    )
+    presentation: dict[str, str] = Field(
+        default_factory=dict,
+        description="Per-module presentation generation state keyed by module name. "
+        "Values are 'complete', 'incomplete', or 'failed'.",
+    )
+
+
+# ---------------------------------------------------------------------------
+# Lesson Plan & Presentation Artifacts (Issue #12 — Pedagogical Asset Pipeline)
+# ---------------------------------------------------------------------------
+
+
+class SessionBlock(BaseModel):
+    """A single teaching session within a lesson plan.
+
+    Represents one block of instruction (typically 45–90 minutes) with
+    learning objectives, activities, resources, differentiation, and
+    assessment checkpoints tailored for MBO4 vocational education.
+    """
+
+    session_number: int = Field(description="Sequential session number within the module.", ge=1)
+    title: str = Field(description="Descriptive title for this session.", min_length=1)
+    duration_minutes: int = Field(
+        description="Duration of this session in minutes.",
+        gt=0,
+    )
+    learning_objectives: list[str] = Field(
+        default_factory=list,
+        description="Specific learning objectives for this session.",
+    )
+    activities: list[str] = Field(
+        default_factory=list,
+        description="Ordered list of teaching and learning activities.",
+    )
+    resources: list[str] = Field(
+        default_factory=list,
+        description="Materials, tools, and equipment needed for this session.",
+    )
+    differentiation: str = Field(
+        default="",
+        description="Strategies for differentiating instruction for diverse learners.",
+    )
+    assessment: str = Field(
+        default="",
+        description="Formative or summative assessment approach for this session.",
+    )
+
+
+class LessonPlanManifest(BaseModel):
+    """A complete lesson plan for a single curriculum module.
+
+    Produced by the Instructional Coordinator agent.  Contains a session-by-session
+    breakdown with timing, differentiation, and assessment checkpoints suitable
+    for MBO4 vocational teachers.
+    """
+
+    module_name: str = Field(
+        description="The curriculum module this lesson plan belongs to.",
+        min_length=1,
+    )
+    sessions: list[SessionBlock] = Field(
+        default_factory=list,
+        description="Ordered list of teaching sessions for this module.",
+    )
+    total_duration_minutes: int = Field(
+        default=0,
+        description="Sum of all session durations in minutes.",
+        ge=0,
+    )
+    differentiation_strategies: list[str] = Field(
+        default_factory=list,
+        description="Global differentiation strategies applicable across all sessions.",
+    )
+    assessment_checkpoints: list[str] = Field(
+        default_factory=list,
+        description="Key assessment milestones across the module.",
+    )
+    materials_required: list[str] = Field(
+        default_factory=list,
+        description="All materials and equipment needed for the entire module.",
+    )
+    prerequisites: list[str] = Field(
+        default_factory=list,
+        description="Knowledge, skills, or resources required before starting this module.",
+    )
+
+
+class Slide(BaseModel):
+    """A single slide in a teacher presentation deck.
+
+    Used by the Presentation Designer to generate Marp Markdown slide decks
+    with structured content and speaker notes.
+    """
+
+    slide_number: int = Field(description="Position of this slide in the deck (1-based).", ge=0)
+    slide_type: str = Field(
+        description="Type of slide: 'title', 'bullets', 'code', 'diagram', 'activity', or 'summary'.",
+        min_length=1,
+    )
+    title: str = Field(description="Slide title / heading.", min_length=1)
+    content: str = Field(
+        default="",
+        description="Slide body content (bullets, code blocks, or descriptive text).",
+    )
+    speaker_notes: str = Field(
+        default="",
+        description="Speaker notes for the teacher delivering this slide.",
+    )
+    transition: str = Field(
+        default="",
+        description="Optional slide transition hint (e.g. 'fade', 'none').",
+    )
+
+
+class PresentationManifest(BaseModel):
+    """A teacher slide deck manifest for a single curriculum module.
+
+    Produced by the Presentation Designer agent.  Contains structured slide data
+    that can be rendered as Marp Markdown for teacher-led classroom presentations.
+    """
+
+    module_name: str = Field(
+        description="The curriculum module this presentation belongs to.",
+        min_length=1,
+    )
+    slides: list[Slide] = Field(
+        default_factory=list,
+        description="Ordered list of slides in the presentation deck.",
+    )
+    total_estimated_minutes: int = Field(
+        default=0,
+        description="Estimated total delivery time in minutes.",
+        ge=0,
+    )
+    marp_frontmatter: dict[str, str] = Field(
+        default_factory=dict,
+        description="Marp Markdown frontmatter configuration "
+        "(e.g. theme, paginate, size, backgroundColor).",
+    )

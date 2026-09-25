@@ -8,7 +8,15 @@ from enum import Enum
 import pytest
 from pydantic import ValidationError
 
-from src.models import ModalityDecision, ModalityType, RemotionManifest
+from src.models import (
+    LessonPlanManifest,
+    ModalityDecision,
+    ModalityType,
+    PresentationManifest,
+    RemotionManifest,
+    SessionBlock,
+    Slide,
+)
 
 
 class TestModalityType:
@@ -313,3 +321,273 @@ class TestRemotionManifest:
                 components=[],
                 module_name="Test",
             )
+
+# ===================================================================
+# LessonPlanManifest & SessionBlock (Issue #12)
+# ===================================================================
+
+
+class TestSessionBlock:
+    """Tests for the SessionBlock Pydantic model."""
+
+    def test_valid_session_block(self) -> None:
+        sb = SessionBlock(
+            session_number=1,
+            title="Introduction to OOP",
+            duration_minutes=45,
+        )
+        assert sb.session_number == 1
+        assert sb.title == "Introduction to OOP"
+        assert sb.duration_minutes == 45
+        assert sb.learning_objectives == []
+        assert sb.activities == []
+
+    def test_full_session_block(self) -> None:
+        sb = SessionBlock(
+            session_number=2,
+            title="Inheritance Deep Dive",
+            duration_minutes=60,
+            learning_objectives=["Understand inheritance", "Apply super()"],
+            activities=["Live coding demo", "Pair programming exercise"],
+            resources=["IDE", "Slides", "Starter code repo"],
+            differentiation="Advanced students: add multiple inheritance",
+            assessment="Exit ticket: write a class hierarchy",
+        )
+        assert len(sb.learning_objectives) == 2
+        assert len(sb.activities) == 2
+        assert len(sb.resources) == 3
+        assert "Advanced" in sb.differentiation
+
+    def test_rejects_invalid_duration_minutes(self) -> None:
+        with pytest.raises(ValidationError, match="duration_minutes"):
+            SessionBlock(
+                session_number=1,
+                title="Test",
+                duration_minutes=0,
+            )
+
+    def test_rejects_negative_duration(self) -> None:
+        with pytest.raises(ValidationError, match="duration_minutes"):
+            SessionBlock(
+                session_number=1,
+                title="Test",
+                duration_minutes=-1,
+            )
+
+    def test_rejects_empty_title(self) -> None:
+        with pytest.raises(ValidationError, match="title"):
+            SessionBlock(
+                session_number=1,
+                title="",
+                duration_minutes=45,
+            )
+
+    def test_session_number_must_be_positive(self) -> None:
+        with pytest.raises(ValidationError, match="session_number"):
+            SessionBlock(
+                session_number=0,
+                title="Test",
+                duration_minutes=45,
+            )
+
+    def test_json_roundtrip(self) -> None:
+        sb = SessionBlock(
+            session_number=1,
+            title="Test Session",
+            duration_minutes=45,
+            learning_objectives=["LO1"],
+        )
+        raw = sb.model_dump_json()
+        reloaded = SessionBlock.model_validate_json(raw)
+        assert reloaded.title == sb.title
+        assert reloaded.learning_objectives == sb.learning_objectives
+
+
+class TestLessonPlanManifest:
+    """Tests for the LessonPlanManifest Pydantic model."""
+
+    def test_valid_manifest(self) -> None:
+        lp = LessonPlanManifest(
+            module_name="Python Fundamentals",
+            sessions=[
+                SessionBlock(
+                    session_number=1,
+                    title="Variables and Types",
+                    duration_minutes=45,
+                )
+            ],
+            total_duration_minutes=45,
+        )
+        assert lp.module_name == "Python Fundamentals"
+        assert len(lp.sessions) == 1
+        assert lp.total_duration_minutes == 45
+
+    def test_rejects_empty_module_name(self) -> None:
+        with pytest.raises(ValidationError, match="module_name"):
+            LessonPlanManifest(module_name="")
+
+    def test_multiple_sessions(self) -> None:
+        lp = LessonPlanManifest(
+            module_name="Advanced JS",
+            sessions=[
+                SessionBlock(session_number=1, title="S1", duration_minutes=45),
+                SessionBlock(session_number=2, title="S2", duration_minutes=50),
+                SessionBlock(session_number=3, title="S3", duration_minutes=40),
+            ],
+            total_duration_minutes=135,
+        )
+        assert len(lp.sessions) == 3
+        assert lp.total_duration_minutes == 135
+
+    def test_prerequisites_defaults_to_empty(self) -> None:
+        lp = LessonPlanManifest(module_name="Test")
+        assert lp.prerequisites == []
+        assert lp.sessions == []
+
+    def test_json_roundtrip(self) -> None:
+        lp = LessonPlanManifest(
+            module_name="Test Module",
+            sessions=[
+                SessionBlock(session_number=1, title="S1", duration_minutes=45),
+            ],
+            total_duration_minutes=45,
+            prerequisites=["Basic Python"],
+        )
+        raw = lp.model_dump_json()
+        reloaded = LessonPlanManifest.model_validate_json(raw)
+        assert reloaded.module_name == lp.module_name
+        assert reloaded.prerequisites == lp.prerequisites
+        with pytest.raises(ValidationError, match="height"):
+            RemotionManifest(
+                composition_id="test",
+                duration_in_frames=100,
+                height=0,
+                components=[],
+                module_name="Test",
+            )
+# ===================================================================
+# PresentationManifest & Slide (Issue #12)
+# ===================================================================
+
+
+class TestSlide:
+    """Tests for the Slide Pydantic model."""
+
+    def test_valid_slide(self) -> None:
+        s = Slide(
+            slide_number=0,
+            slide_type="title",
+            title="Welcome to Python",
+        )
+        assert s.slide_number == 0
+        assert s.slide_type == "title"
+        assert s.title == "Welcome to Python"
+        assert s.content == ""
+
+    def test_full_slide(self) -> None:
+        s = Slide(
+            slide_number=5,
+            slide_type="code",
+            title="Functions Example",
+            content="def hello():\n    print('Hello')",
+            speaker_notes="Walk through function syntax step by step.",
+            transition="fade",
+        )
+        assert s.speaker_notes == "Walk through function syntax step by step."
+        assert s.transition == "fade"
+
+    def test_rejects_empty_slide_type(self) -> None:
+        with pytest.raises(ValidationError, match="slide_type"):
+            Slide(
+                slide_number=1,
+                slide_type="",
+                title="Test",
+            )
+
+    def test_rejects_empty_title(self) -> None:
+        with pytest.raises(ValidationError, match="title"):
+            Slide(
+                slide_number=1,
+                slide_type="bullets",
+                title="",
+            )
+
+    def test_slide_number_non_negative(self) -> None:
+        """slide_number with ge=0 accepts zero and positive."""
+        s = Slide(slide_number=0, slide_type="title", title="Start")
+        assert s.slide_number == 0
+
+    def test_slide_number_cannot_be_negative(self) -> None:
+        with pytest.raises(ValidationError):
+            Slide(slide_number=-1, slide_type="title", title="Test")
+
+    def test_json_roundtrip(self) -> None:
+        s = Slide(
+            slide_number=3,
+            slide_type="bullets",
+            title="Key Points",
+            content="- Point 1\n- Point 2",
+            speaker_notes="Emphasize point 2",
+            transition="none",
+        )
+        raw = s.model_dump_json()
+        reloaded = Slide.model_validate_json(raw)
+        assert reloaded.slide_number == s.slide_number
+        assert reloaded.speaker_notes == s.speaker_notes
+
+
+class TestPresentationManifest:
+    """Tests for the PresentationManifest Pydantic model."""
+
+    def test_valid_manifest(self) -> None:
+        pm = PresentationManifest(
+            module_name="Python Basics",
+            slides=[
+                Slide(slide_number=0, slide_type="title", title="Python Basics"),
+                Slide(
+                    slide_number=1,
+                    slide_type="bullets",
+                    title="Learning Goals",
+                    content="- Variables\n- Functions",
+                ),
+            ],
+            total_estimated_minutes=15,
+        )
+        assert pm.module_name == "Python Basics"
+        assert len(pm.slides) == 2
+        assert pm.total_estimated_minutes == 15
+
+    def test_rejects_empty_module_name(self) -> None:
+        with pytest.raises(ValidationError, match="module_name"):
+            PresentationManifest(module_name="")
+
+    def test_marp_frontmatter_defaults_to_empty(self) -> None:
+        pm = PresentationManifest(module_name="Test")
+        assert pm.marp_frontmatter == {}
+        assert pm.slides == []
+
+    def test_marp_frontmatter_with_config(self) -> None:
+        pm = PresentationManifest(
+            module_name="Test",
+            marp_frontmatter={
+                "theme": "gaia",
+                "paginate": "true",
+                "size": "16:9",
+            },
+        )
+        assert pm.marp_frontmatter["theme"] == "gaia"
+        assert pm.marp_frontmatter["size"] == "16:9"
+
+    def test_json_roundtrip(self) -> None:
+        pm = PresentationManifest(
+            module_name="Test Module",
+            slides=[
+                Slide(slide_number=0, slide_type="title", title="Title Slide"),
+            ],
+            total_estimated_minutes=5,
+            marp_frontmatter={"theme": "default"},
+        )
+        raw = pm.model_dump_json()
+        reloaded = PresentationManifest.model_validate_json(raw)
+        assert reloaded.module_name == pm.module_name
+        assert reloaded.marp_frontmatter == pm.marp_frontmatter

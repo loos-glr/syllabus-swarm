@@ -80,6 +80,8 @@ THEORY_INSTRUCTOR: str = "THEORY_INSTRUCTOR"
 EDUCATION_DIRECTOR: str = "EDUCATION_DIRECTOR"
 MEDIA_STRATEGIST: str = "MEDIA_STRATEGIST"
 VIDEO_ENGINEER: str = "VIDEO_ENGINEER"
+INSTRUCTIONAL_COORDINATOR: str = "INSTRUCTIONAL_COORDINATOR"
+PRESENTATION_DESIGNER: str = "PRESENTATION_DESIGNER"
 
 # All known agent roles (used by list_agent_configs).
 _KNOWN_ROLES: tuple[str, ...] = (
@@ -92,6 +94,8 @@ _KNOWN_ROLES: tuple[str, ...] = (
     EDUCATION_DIRECTOR,
     MEDIA_STRATEGIST,
     VIDEO_ENGINEER,
+    INSTRUCTIONAL_COORDINATOR,
+    PRESENTATION_DESIGNER,
 )
 
 # ---------------------------------------------------------------------------
