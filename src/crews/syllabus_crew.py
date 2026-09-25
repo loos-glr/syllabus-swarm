@@ -31,7 +31,9 @@ from crewai import Agent, Crew, Process
 
 from src.agents.curriculum_architect import get_architect
 from src.agents.education_director import get_education_director
+from src.agents.instructional_coordinator import get_instructional_coordinator
 from src.agents.lab_developer import get_lab_developer
+from src.agents.presentation_designer import get_presentation_designer
 from src.agents.qa_reviewer import get_qa_reviewer
 from src.agents.theory_instructor import get_theory_instructor
 from src.exporters import (
@@ -45,6 +47,8 @@ from src.exporters.theory_validator import (
 )
 from src.models import GenerationState, TierState
 from src.tasks.lab_generation import create_lab_generation_task
+from src.tasks.lesson_plan_generation import create_lesson_plan_task
+from src.tasks.presentation_generation import create_presentation_task
 from src.tasks.qa_review import create_qa_review_task
 from src.tasks.syllabus_generation import create_syllabus_generation_task
 from src.tasks.syllabus_review import create_syllabus_review_task
@@ -70,6 +74,8 @@ class SwarmState(str, Enum):
     AWAITING_FEEDBACK = "awaiting_feedback"
     EXPORTING = "exporting"
     VIDEO_GENERATING = "video_generating"
+    LESSON_PLAN_GENERATING = "lesson_plan_generating"
+    PRESENTATION_GENERATING = "presentation_generating"
 
 
 # ---------------------------------------------------------------------------
@@ -314,6 +320,10 @@ class CrewResult:
         syllabus_review_report: str | None = None,
         human_feedback_requested: bool = False,
         human_feedback_summary: str | None = None,
+        lesson_plan_ok: bool = True,
+        lesson_plan_error: str | None = None,
+        presentation_ok: bool = True,
+        presentation_error: str | None = None,
     ) -> None:
         self.syllabus_path = syllabus_path
         self.labs_base_path = labs_base_path
@@ -332,6 +342,10 @@ class CrewResult:
         self.syllabus_review_report = syllabus_review_report
         self.human_feedback_requested = human_feedback_requested
         self.human_feedback_summary = human_feedback_summary
+        self.lesson_plan_ok = lesson_plan_ok
+        self.lesson_plan_error = lesson_plan_error
+        self.presentation_ok = presentation_ok
+        self.presentation_error = presentation_error
 
     @property
     def all_succeeded(self) -> bool:
@@ -341,6 +355,8 @@ class CrewResult:
             and self.theory_ok
             and self.labs_ok
             and self.qa_ok
+            and self.lesson_plan_ok
+            and self.presentation_ok
         )
 
 
@@ -608,6 +624,8 @@ def run_syllabus_crew(
     skip_theory: bool = False,
     skip_labs: bool = False,
     skip_qa: bool = False,
+    skip_lesson_plans: bool = False,
+    skip_presentations: bool = False,
     resume_dir: str | Path | None = None,
     run_id: str | None = None,
     human_feedback: str | None = None,
@@ -952,6 +970,124 @@ def run_syllabus_crew(
     else:
         theory_error = "Skipped — Curriculum Architect produced no syllabus to use as context."
 
+    # ── 2.5. Lesson Plan Generation — Instructional Coordinator ──────────
+    lesson_plan_ok = False
+    lesson_plan_error: str | None = None
+
+    if skip_lesson_plans:
+        lesson_plan_ok = True
+    elif syllabus_raw:
+        lp_state = load_generation_state(run_dir)
+        all_lp_tiers_ok = True
+        lp_coordinator: Agent | None = None
+
+        for tier_dir_name, tier_label in _TIERS:
+            if lp_state:
+                tier_lp_status = lp_state.lesson_plan.get(tier_dir_name)
+                if tier_lp_status == "complete":
+                    if verbose:
+                        print(f"  ⏭️  Lesson Plan for {tier_dir_name}: already complete, skipping.")
+                    continue
+
+            try:
+                if lp_coordinator is None:
+                    lp_coordinator = get_instructional_coordinator(verbose=verbose)
+
+                lp_task = create_lesson_plan_task(
+                    agent=lp_coordinator,
+                    course_name=course_name,
+                    syllabus_context=syllabus_raw,
+                    module_name=tier_label,
+                    run_id=_active_run_id,
+                    material_language=material_language,
+                    verbose=verbose,
+                )
+                lp_crew = Crew(
+                    agents=[lp_coordinator],
+                    tasks=[lp_task],
+                    process=Process.sequential,
+                    verbose=verbose,
+                )
+                lp_crew.kickoff()
+
+                if lp_state:
+                    lp_state.lesson_plan[tier_dir_name] = "complete"
+                    save_generation_state(run_dir, lp_state)
+
+                if verbose:
+                    print(f"  ✅  Lesson Plan for {tier_dir_name} completed.")
+
+            except Exception as exc:
+                all_lp_tiers_ok = False
+                if lp_state:
+                    lp_state.lesson_plan[tier_dir_name] = "failed"
+                    save_generation_state(run_dir, lp_state)
+                if verbose:
+                    print(f"  ❌  Lesson Plan for {tier_dir_name} failed: {exc}", file=sys.stderr)
+
+        lesson_plan_ok = all_lp_tiers_ok
+        if not lesson_plan_ok:
+            lesson_plan_error = "One or more lesson plan tiers failed."
+
+    # ── 2.6. Presentation Generation — Presentation Designer ────────────
+    presentation_ok = False
+    presentation_error: str | None = None
+
+    if skip_presentations:
+        presentation_ok = True
+    elif syllabus_raw:
+        pres_state = load_generation_state(run_dir)
+        all_pres_tiers_ok = True
+        pres_designer: Agent | None = None
+
+        for tier_dir_name, tier_label in _TIERS:
+            if pres_state:
+                tier_pres_status = pres_state.presentation.get(tier_dir_name)
+                if tier_pres_status == "complete":
+                    if verbose:
+                        print(f"  ⏭️  Presentation for {tier_dir_name}: already complete, skipping.")
+                    continue
+
+            try:
+                if pres_designer is None:
+                    pres_designer = get_presentation_designer(verbose=verbose)
+
+                pres_task = create_presentation_task(
+                    agent=pres_designer,
+                    course_name=course_name,
+                    syllabus_context=syllabus_raw,
+                    module_name=tier_label,
+                    run_id=_active_run_id,
+                    material_language=material_language,
+                    verbose=verbose,
+                )
+                pres_crew = Crew(
+                    agents=[pres_designer],
+                    tasks=[pres_task],
+                    process=Process.sequential,
+                    verbose=verbose,
+                )
+                pres_crew.kickoff()
+
+                if pres_state:
+                    pres_state.presentation[tier_dir_name] = "complete"
+                    save_generation_state(run_dir, pres_state)
+
+                if verbose:
+                    print(f"  ✅  Presentation for {tier_dir_name} completed.")
+
+            except Exception as exc:
+                all_pres_tiers_ok = False
+                if pres_state:
+                    pres_state.presentation[tier_dir_name] = "failed"
+                    save_generation_state(run_dir, pres_state)
+                if verbose:
+                    print(f"  ❌  Presentation for {tier_dir_name} failed: {exc}", file=sys.stderr)
+
+        presentation_ok = all_pres_tiers_ok
+        if not presentation_ok:
+            presentation_error = "One or more presentation tiers failed."
+
     # ── 3. Lab & Project Developer ─────────────────────────────────────
     labs_ok = False
     labs_error: str | None = None
@@ -1213,4 +1349,8 @@ def run_syllabus_crew(
         syllabus_review_ok=syllabus_review_ok,
         syllabus_review_error=syllabus_review_error,
         syllabus_review_report=syllabus_review_report,
+        lesson_plan_ok=lesson_plan_ok,
+        lesson_plan_error=lesson_plan_error,
+        presentation_ok=presentation_ok,
+        presentation_error=presentation_error,
     )
