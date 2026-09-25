@@ -141,7 +141,7 @@ class OutputExportToolArgs(BaseModel):
         default="",
         description=("Per-run output directory id, e.g. '2026-08-24_071602_Course_Name'."),
     )
-    files: Any = Field(
+    files: dict | str | None = Field(
         default=None,
         description=(
             "Mapping of relative file paths to file contents. May be a dict or a JSON string."
@@ -153,17 +153,21 @@ class OutputExportToolArgs(BaseModel):
         description="Base directory (write-directory-tree command).",
     )
     course_slug: str = Field(default="", description="URL-safe course slug (export-course-graph).")
-    specification: Any = Field(
+    specification: dict | str | None = Field(
         default=None, description="Course specification dict (export-course-graph)."
     )
-    learning_objectives: Any = Field(
+    learning_objectives: list | str | None = Field(
         default=None, description="Learning objectives list (export-course-graph)."
     )
-    key_concepts: Any = Field(default=None, description="Key concepts list (export-course-graph).")
-    prerequisites: Any = Field(
+    key_concepts: list | str | None = Field(
+        default=None, description="Key concepts list (export-course-graph)."
+    )
+    prerequisites: list | str | None = Field(
         default=None, description="Prerequisites list (export-course-graph)."
     )
-    modules: Any = Field(default=None, description="Modules list (export-course-graph).")
+    modules: list | str | None = Field(
+        default=None, description="Modules list (export-course-graph)."
+    )
 
 
 class OutputExportTool(BaseTool):
