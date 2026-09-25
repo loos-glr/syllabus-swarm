@@ -528,3 +528,140 @@ class PresentationManifest(BaseModel):
         description="Marp Markdown frontmatter configuration "
         "(e.g. theme, paginate, size, backgroundColor).",
     )
+
+
+# ---------------------------------------------------------------------------
+# DesignSystem — GLR Media Creative Design Tokens
+# ---------------------------------------------------------------------------
+# Parsed from DESIGN.md YAML frontmatter.  Provides type-safe access to
+# all color, typography, spacing, and component tokens that agents use
+# to embed the GLR brand into generated materials.
+
+
+class DesignColorTokens(BaseModel):
+    """All color tokens defined in the DESIGN.md YAML frontmatter."""
+
+    surface: str = "#faf9fd"
+    surface_dim: str = "#dbd9dd"
+    surface_bright: str = "#faf9fd"
+    surface_container_lowest: str = "#ffffff"
+    surface_container_low: str = "#f5f3f7"
+    surface_container: str = "#efedf1"
+    surface_container_high: str = "#e9e7ec"
+    surface_container_highest: str = "#e3e2e6"
+    on_surface: str = "#1b1b1f"
+    on_surface_variant: str = "#424936"
+    inverse_surface: str = "#2f3034"
+    inverse_on_surface: str = "#f2f0f4"
+    outline: str = "#727a64"
+    outline_variant: str = "#c2cab1"
+    surface_tint: str = "#416900"
+    primary: str = "#416900"
+    on_primary: str = "#ffffff"
+    primary_container: str = "#76b800"
+    on_primary_container: str = "#284300"
+    inverse_primary: str = "#95da32"
+    secondary: str = "#5f5e5e"
+    on_secondary: str = "#ffffff"
+    secondary_container: str = "#e5e2e1"
+    on_secondary_container: str = "#656464"
+    tertiary: str = "#2540ff"
+    on_tertiary: str = "#ffffff"
+    tertiary_container: str = "#939fff"
+    on_tertiary_container: str = "#001dbb"
+    error: str = "#ba1a1a"
+    on_error: str = "#ffffff"
+    error_container: str = "#ffdad6"
+    on_error_container: str = "#93000a"
+    primary_fixed: str = "#aff74e"
+    primary_fixed_dim: str = "#95da32"
+    on_primary_fixed: str = "#102000"
+    on_primary_fixed_variant: str = "#304f00"
+    secondary_fixed: str = "#e5e2e1"
+    secondary_fixed_dim: str = "#c8c6c5"
+    on_secondary_fixed: str = "#1c1b1b"
+    on_secondary_fixed_variant: str = "#474646"
+    tertiary_fixed: str = "#dfe0ff"
+    tertiary_fixed_dim: str = "#bcc2ff"
+    on_tertiary_fixed: str = "#000a63"
+    on_tertiary_fixed_variant: str = "#0023d9"
+    background: str = "#faf9fd"
+    on_background: str = "#1b1b1f"
+    surface_variant: str = "#e3e2e6"
+    electric_lime: str = "#A6E22E"
+    pure_black: str = "#000000"
+    pure_white: str = "#FFFFFF"
+    surface_subtle: str = "#F4F4F6"
+    border_structural: str = "#E5E7EB"
+    accent_ultramarine: str = "#002BFF"
+
+
+class TypographyToken(BaseModel):
+    """A single typography style definition."""
+
+    fontFamily: str = "Space Grotesk"
+    fontSize: str = "16px"
+    fontWeight: str = "400"
+    lineHeight: str = "24px"
+    letterSpacing: str = "0em"
+
+
+class DesignTypographyScale(BaseModel):
+    """All typography styles defined in DESIGN.md."""
+
+    display_xl: TypographyToken = Field(default_factory=TypographyToken)
+    display_xl_mobile: TypographyToken = Field(default_factory=TypographyToken)
+    headline_lg: TypographyToken = Field(default_factory=TypographyToken)
+    headline_lg_mobile: TypographyToken = Field(default_factory=TypographyToken)
+    headline_md: TypographyToken = Field(default_factory=TypographyToken)
+    headline_sm: TypographyToken = Field(default_factory=TypographyToken)
+    title_md: TypographyToken = Field(default_factory=TypographyToken)
+    body_lg: TypographyToken = Field(default_factory=TypographyToken)
+    body_md: TypographyToken = Field(default_factory=TypographyToken)
+    body_sm: TypographyToken = Field(default_factory=TypographyToken)
+    label_lg: TypographyToken = Field(default_factory=TypographyToken)
+    label_md: TypographyToken = Field(default_factory=TypographyToken)
+    label_code: TypographyToken = Field(default_factory=TypographyToken)
+
+
+class DesignSpacingTokens(BaseModel):
+    """Spacing / layout tokens from DESIGN.md."""
+
+    gutter: str = "1.5rem"
+    gutter_mobile: str = "1rem"
+    margin: str = "3rem"
+    margin_mobile: str = "1.25rem"
+    space_xs: str = "0.25rem"
+    space_sm: str = "0.5rem"
+    space_md: str = "1rem"
+    space_lg: str = "1.5rem"
+    space_xl: str = "2.5rem"
+
+
+class DesignSystem(BaseModel):
+    """Top-level container for the complete GLR Media Creative design system.
+
+    Parsed from ``DESIGN.md`` and used as the single source of truth for
+    all design tokens referenced by agents during material generation.
+    """
+
+    name: str = Field(default="GLR Media Creative", description="Design system name.")
+    brand_statement: str = Field(
+        default="",
+        description="Narrative description of the brand identity, movement, and tone.",
+    )
+    design_movement: str = Field(
+        default="",
+        description="The design movement label (e.g. 'High-Contrast Brutalist Modernism').",
+    )
+    colors: DesignColorTokens = Field(default_factory=DesignColorTokens)
+    typography: DesignTypographyScale = Field(default_factory=DesignTypographyScale)
+    spacing: DesignSpacingTokens = Field(default_factory=DesignSpacingTokens)
+    shapes_border_radius: str = Field(
+        default="0px",
+        description="All UI surfaces use sharp 0px border-radius.",
+    )
+    depth_style: str = Field(
+        default="crisp-architectural",
+        description="Depth is achieved via structural borders and hard offset shadows, not blur.",
+    )
