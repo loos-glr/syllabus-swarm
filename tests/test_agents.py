@@ -41,7 +41,9 @@ from src.agents.theory_instructor import (
 from src.llm_factory import (
     CURRICULUM_ARCHITECT,
     EDUCATION_DIRECTOR,
+    INSTRUCTIONAL_COORDINATOR,
     LAB_DEVELOPER,
+    PRESENTATION_DESIGNER,
     QA_REVIEWER,
     THEORY_INSTRUCTOR,
 )
@@ -1090,7 +1092,194 @@ class TestCreateVideoEngineer:
         from src.agents.video_engineer import create_video_engineer
 
         custom_llm = MagicMock(spec=LLM)
-        with patch("src.llm_factory.build_llm_for_agent") as mock_build:
-            agent = create_video_engineer(llm=custom_llm)
+        with patch("src.llm_factory.build_llm_for_agent") as _mock_build:
+            _agent = create_video_engineer(llm=custom_llm)
+            _mock_build.assert_not_called()
+# ===================================================================
+# create_instructional_coordinator (Issue #14)
+# ===================================================================
+
+
+class TestCreateInstructionalCoordinator:
+    """Tests for the Instructional Coordinator agent factory."""
+
+    def test_role_contains_coordinator(self, mock_llm: MagicMock) -> None:
+        from src.agents.instructional_coordinator import create_instructional_coordinator
+
+        with patch(
+            "src.llm_factory.build_llm_for_agent",
+            return_value=mock_llm,
+        ):
+            agent = create_instructional_coordinator()
+            assert "Instructional Coordinator" in agent.role
+
+    def test_factory_returns_agent(self, mock_llm: MagicMock) -> None:
+        from src.agents.instructional_coordinator import create_instructional_coordinator
+
+        with patch(
+            "src.llm_factory.build_llm_for_agent",
+            return_value=mock_llm,
+        ):
+            agent = create_instructional_coordinator()
+            from crewai import Agent as CrewAIAgent
+
+            assert isinstance(agent, CrewAIAgent)
+
+    def test_goal_contains_lesson_plan(self, mock_llm: MagicMock) -> None:
+        from src.agents.instructional_coordinator import create_instructional_coordinator
+
+        with patch(
+            "src.llm_factory.build_llm_for_agent",
+            return_value=mock_llm,
+        ):
+            agent = create_instructional_coordinator()
+            assert "lesson plan" in agent.goal.lower()
+
+    def test_has_output_export_tool(self, mock_llm: MagicMock) -> None:
+        from src.agents.instructional_coordinator import create_instructional_coordinator
+
+        with patch(
+            "src.llm_factory.build_llm_for_agent",
+            return_value=mock_llm,
+        ):
+            agent = create_instructional_coordinator()
+            assert len(agent.tools) == 1
+            assert "OutputExport" in type(agent.tools[0]).__name__
+
+    def test_llm_factory_called_with_correct_role(self, mock_llm: MagicMock) -> None:
+        from src.agents.instructional_coordinator import create_instructional_coordinator
+
+        with patch(
+            "src.agents.instructional_coordinator.build_llm_for_agent",
+            return_value=mock_llm,
+        ) as mock_build:
+            create_instructional_coordinator()
+            mock_build.assert_called_once_with(INSTRUCTIONAL_COORDINATOR)
+
+    def test_explicit_llm_bypasses_factory(self, mock_llm: MagicMock) -> None:
+        from src.agents.instructional_coordinator import create_instructional_coordinator
+
+        custom_llm = MagicMock(spec=LLM)
+        with patch("src.agents.instructional_coordinator.build_llm_for_agent") as mock_build:
+            agent = create_instructional_coordinator(llm=custom_llm)
             assert agent.llm is custom_llm
             mock_build.assert_not_called()
+
+    def test_allow_delegation_is_false(self, mock_llm: MagicMock) -> None:
+        from src.agents.instructional_coordinator import create_instructional_coordinator
+
+        with patch(
+            "src.llm_factory.build_llm_for_agent",
+            return_value=mock_llm,
+        ):
+            agent = create_instructional_coordinator()
+            assert agent.allow_delegation is False
+
+    def test_get_singleton_returns_same_instance(self, mock_llm: MagicMock) -> None:
+        import src.agents.instructional_coordinator as mod
+        from src.agents.instructional_coordinator import get_instructional_coordinator
+
+        mod._instructional_coordinator_instance = None
+        with patch(
+            "src.agents.instructional_coordinator.build_llm_for_agent",
+            return_value=mock_llm,
+        ):
+            a1 = get_instructional_coordinator()
+            a2 = get_instructional_coordinator()
+            assert a1 is a2
+            assert mod._instructional_coordinator_instance is a1
+
+
+# ===================================================================
+# create_presentation_designer (Issue #15)
+# ===================================================================
+
+
+class TestCreatePresentationDesigner:
+    """Tests for the Presentation Designer agent factory."""
+
+    def test_role_contains_designer(self, mock_llm: MagicMock) -> None:
+        from src.agents.presentation_designer import create_presentation_designer
+
+        with patch(
+            "src.llm_factory.build_llm_for_agent",
+            return_value=mock_llm,
+        ):
+            agent = create_presentation_designer()
+            assert "Presentation Designer" in agent.role
+
+    def test_factory_returns_agent(self, mock_llm: MagicMock) -> None:
+        from src.agents.presentation_designer import create_presentation_designer
+
+        with patch(
+            "src.llm_factory.build_llm_for_agent",
+            return_value=mock_llm,
+        ):
+            agent = create_presentation_designer()
+            from crewai import Agent as CrewAIAgent
+
+            assert isinstance(agent, CrewAIAgent)
+
+    def test_goal_contains_marp(self, mock_llm: MagicMock) -> None:
+        from src.agents.presentation_designer import create_presentation_designer
+
+        with patch(
+            "src.llm_factory.build_llm_for_agent",
+            return_value=mock_llm,
+        ):
+            agent = create_presentation_designer()
+            assert "Marp" in agent.goal
+
+    def test_has_output_export_tool(self, mock_llm: MagicMock) -> None:
+        from src.agents.presentation_designer import create_presentation_designer
+
+        with patch(
+            "src.llm_factory.build_llm_for_agent",
+            return_value=mock_llm,
+        ):
+            agent = create_presentation_designer()
+            assert len(agent.tools) == 1
+            assert "OutputExport" in type(agent.tools[0]).__name__
+
+    def test_llm_factory_called_with_correct_role(self, mock_llm: MagicMock) -> None:
+        from src.agents.presentation_designer import create_presentation_designer
+
+        with patch(
+            "src.agents.presentation_designer.build_llm_for_agent",
+            return_value=mock_llm,
+        ) as mock_build:
+            create_presentation_designer()
+            mock_build.assert_called_once_with(PRESENTATION_DESIGNER)
+
+    def test_explicit_llm_bypasses_factory(self, mock_llm: MagicMock) -> None:
+        from src.agents.presentation_designer import create_presentation_designer
+
+        custom_llm = MagicMock(spec=LLM)
+        with patch("src.agents.presentation_designer.build_llm_for_agent") as mock_build:
+            agent = create_presentation_designer(llm=custom_llm)
+            assert agent.llm is custom_llm
+            mock_build.assert_not_called()
+
+    def test_allow_delegation_is_false(self, mock_llm: MagicMock) -> None:
+        from src.agents.presentation_designer import create_presentation_designer
+
+        with patch(
+            "src.llm_factory.build_llm_for_agent",
+            return_value=mock_llm,
+        ):
+            agent = create_presentation_designer()
+            assert agent.allow_delegation is False
+
+    def test_get_singleton_returns_same_instance(self, mock_llm: MagicMock) -> None:
+        import src.agents.presentation_designer as mod
+        from src.agents.presentation_designer import get_presentation_designer
+
+        mod._presentation_designer_instance = None
+        with patch(
+            "src.agents.presentation_designer.build_llm_for_agent",
+            return_value=mock_llm,
+        ):
+            a1 = get_presentation_designer()
+            a2 = get_presentation_designer()
+            assert a1 is a2
+            assert mod._presentation_designer_instance is a1
