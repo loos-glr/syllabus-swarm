@@ -783,6 +783,7 @@ def run_syllabus_crew(
             course_name=course_name,
             course_context=course_context,
             material_language=material_language,
+            human_feedback=human_feedback,
         )
 
         try:
@@ -831,6 +832,7 @@ def run_syllabus_crew(
                 course_name=course_name,
                 syllabus_context=syllabus_raw,
                 material_language=material_language,
+                human_feedback=human_feedback,
                 verbose=verbose,
             )
 
@@ -874,7 +876,7 @@ def run_syllabus_crew(
         theory_ok = True
     elif syllabus_raw:
         # ── Load generation state for resume detection ────────────────
-        state = load_generation_state(run_dir)
+        state = None if human_feedback else load_generation_state(run_dir)
 
         for tier_dir_name, tier_label in _TIERS:
             # ── Skip completed theory ──────────────────────────────────
@@ -907,6 +909,7 @@ def run_syllabus_crew(
                     run_id=_active_run_id,
                     tier=tier_dir_name,
                     material_language=material_language,
+                    human_feedback=human_feedback,
                     verbose=verbose,
                 )
 
@@ -977,7 +980,7 @@ def run_syllabus_crew(
     if skip_lesson_plans:
         lesson_plan_ok = True
     elif syllabus_raw:
-        lp_state = load_generation_state(run_dir)
+        lp_state = None if human_feedback else load_generation_state(run_dir)
         all_lp_tiers_ok = True
         lp_coordinator: Agent | None = None
 
@@ -1000,6 +1003,7 @@ def run_syllabus_crew(
                     module_name=tier_label,
                     run_id=_active_run_id,
                     material_language=material_language,
+                    human_feedback=human_feedback,
                     verbose=verbose,
                 )
                 lp_crew = Crew(
@@ -1036,7 +1040,7 @@ def run_syllabus_crew(
     if skip_presentations:
         presentation_ok = True
     elif syllabus_raw:
-        pres_state = load_generation_state(run_dir)
+        pres_state = None if human_feedback else load_generation_state(run_dir)
         all_pres_tiers_ok = True
         pres_designer: Agent | None = None
 
@@ -1059,6 +1063,7 @@ def run_syllabus_crew(
                     module_name=tier_label,
                     run_id=_active_run_id,
                     material_language=material_language,
+                    human_feedback=human_feedback,
                     verbose=verbose,
                 )
                 pres_crew = Crew(
@@ -1121,6 +1126,7 @@ def run_syllabus_crew(
                     run_id=_active_run_id,
                     tier=tier_name,
                     material_language=material_language,
+                    human_feedback=human_feedback,
                     verbose=verbose,
                 )
 
@@ -1173,7 +1179,7 @@ def run_syllabus_crew(
             ]
             all_tier_ok = True
             # ── Load state for resume detection ────────────────────────
-            lab_state = load_generation_state(run_dir)
+            lab_state = None if human_feedback else load_generation_state(run_dir)
 
             # Sequential execution avoids race conditions on the shared
             # Agent singleton (the LLM client and iteration tracker are
@@ -1190,9 +1196,9 @@ def run_syllabus_crew(
                             )
                         continue
 
-                # Also check filesystem (backward compat)
+                # Also check filesystem (backward compat) — skipped when human_feedback
                 tier_labs_path = labs_base_path / tier_name
-                if _is_tier_labs_complete(tier_labs_path):
+                if not human_feedback and _is_tier_labs_complete(tier_labs_path):
                     if lab_state:
                         lab_state.tiers[tier_name] = TierState(
                             status="complete",
