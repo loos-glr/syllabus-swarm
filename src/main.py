@@ -130,6 +130,20 @@ def build_cli_parser() -> argparse.ArgumentParser:
     )
 
     parser.add_argument(
+        "--skip-lesson-plans",
+        action="store_true",
+        default=False,
+        help="Skip lesson plan generation.",
+    )
+
+    parser.add_argument(
+        "--skip-presentations",
+        action="store_true",
+        default=False,
+        help="Skip presentation (slide deck) generation.",
+    )
+
+    parser.add_argument(
         "--profile",
         default=None,
         metavar="PATH",
@@ -1004,6 +1018,8 @@ def main(argv: list[str] | None = None) -> None:
     args = parser.parse_args(argv)
 
     skip_labs: bool = args.skip_labs
+    skip_lesson_plans: bool = args.skip_lesson_plans
+    skip_presentations: bool = args.skip_presentations
     resume_dir: str | None = args.resume_from
     profile_path: str | None = args.profile
     load_session_path: str | None = args.load_session
@@ -1088,6 +1104,8 @@ def main(argv: list[str] | None = None) -> None:
         print(f"  Course:     {course_name}")
         print("  Model:      Per-agent via OpenRouter (see .env.example)")
         print(f"  Labs:       {'Skip' if skip_labs else 'Generate'}")
+        print(f"  Lesson Plans: {'Skip' if skip_lesson_plans else 'Generate'}")
+        print(f"  Presentations: {'Skip' if skip_presentations else 'Generate'}")
         print(f"{'=' * 60}\n")
 
         print("📋  Loaded intake session:")
@@ -1117,6 +1135,8 @@ def main(argv: list[str] | None = None) -> None:
                 primary_language=primary_language,
                 verbose=True,
                 skip_labs=skip_labs,
+                skip_lesson_plans=skip_lesson_plans,
+                skip_presentations=skip_presentations,
                 run_id=run_id,
             )
         except RuntimeError as exc:
@@ -1160,6 +1180,8 @@ def main(argv: list[str] | None = None) -> None:
     if resume_dir:
         print(f"  Resume:     {resume_dir}")
     print(f"  Labs:       {'Skip' if skip_labs else 'Generate'}")
+    print(f"  Lesson Plans: {'Skip' if skip_lesson_plans else 'Generate'}")
+    print(f"  Presentations: {'Skip' if skip_presentations else 'Generate'}")
     print(f"{'=' * 60}\n")
 
     # --- Resolve prerequisites before intake (--builds-upon) -------------
@@ -1251,6 +1273,8 @@ def main(argv: list[str] | None = None) -> None:
             material_language=material_language,
             verbose=True,
             skip_labs=skip_labs,
+            skip_lesson_plans=skip_lesson_plans,
+            skip_presentations=skip_presentations,
             resume_dir=resume_dir,
             run_id=run_id,
         )

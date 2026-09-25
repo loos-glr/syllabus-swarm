@@ -454,6 +454,80 @@ def write_rubric(
     return write_file(path, content, force=force)
 
 
+def write_lesson_plan(
+    course_name: str,
+    module_name: str,
+    content: Any,
+    *,
+    force: bool = False,
+    run_id: str | None = None,
+) -> Path:
+    """Write a lesson plan Markdown file.
+
+    Parameters
+    ----------
+    course_name : str
+        Human-readable course title.
+    module_name : str
+        Module name for the lesson plan subdirectory.
+    content : Any
+        The complete lesson plan (Markdown text).  Coerced via ``str()``.
+    force : bool
+        When ``False``, raises ``FileWriteError`` if the file already exists.
+    run_id : str or None
+        When provided, scopes output under ``output/<run_id>/``.
+
+    Returns
+    -------
+    Path
+        Absolute path to the written lesson plan.
+    """
+    safe_module = _sanitize_filename(module_name)
+    if run_id:
+        path = _PROJECT_ROOT / "output" / run_id / "lesson_plans" / safe_module / "lesson_plan.md"
+    else:
+        path = OUTPUT_PATHS.root / "lesson_plans" / safe_module / "lesson_plan.md"
+    return write_file(path, content, force=force)
+
+
+def write_presentation(
+    course_name: str,
+    module_name: str,
+    content: Any,
+    *,
+    force: bool = False,
+    run_id: str | None = None,
+) -> Path:
+    """Write a presentation (Marp Markdown) file.
+
+    Parameters
+    ----------
+    course_name : str
+        Human-readable course title.
+    module_name : str
+        Module name for the presentation subdirectory.
+    content : Any
+        The complete presentation (Marp Markdown).  Coerced via ``str()``.
+    force : bool
+        When ``False``, raises ``FileWriteError`` if the file already exists.
+    run_id : str or None
+        When provided, scopes output under ``output/<run_id>/``.
+
+    Returns
+    -------
+    Path
+        Absolute path to the written presentation.
+    """
+    safe_module = _sanitize_filename(module_name)
+    if run_id:
+        path = (
+            _PROJECT_ROOT / "output" / run_id / "presentations" / safe_module / "presentation.md"
+        )
+    else:
+        path = OUTPUT_PATHS.root / "presentations" / safe_module / "presentation.md"
+    return write_file(path, content, force=force)
+
+
 # ---------------------------------------------------------------------------
 # RemotionManifest → .tsx export (Issue #11 — Polyglot VaC output)
 # ---------------------------------------------------------------------------
