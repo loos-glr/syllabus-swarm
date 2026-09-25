@@ -72,7 +72,7 @@ OPENROUTER_MODELS_URL: str = "https://openrouter.ai/api/v1/models"
 # v2 per-agent model assignments (Issue #6)
 V2_ASSIGNMENTS: dict[str, dict[str, str]] = {
     CURRICULUM_ARCHITECT: {
-        "model": "deepseek/deepseek-v4-pro",
+        "model": "openrouter/deepseek/deepseek-v4-pro",
         "env_var": "AGENT_CURRICULUM_ARCHITECT_MODEL",
         "rationale": "Deep reasoning for syllabus design",
     },
@@ -82,7 +82,7 @@ V2_ASSIGNMENTS: dict[str, dict[str, str]] = {
         "rationale": "Purpose-built code generation",
     },
     OUTPUT_EXPORTER: {
-        "model": "deepseek/deepseek-v4-flash-latest",
+        "model": "openrouter/deepseek/deepseek-v4-flash-latest",
         "env_var": "AGENT_OUTPUT_EXPORTER_MODEL",
         "rationale": "Low-latency packaging / manifest",
     },

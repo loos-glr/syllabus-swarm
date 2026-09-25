@@ -40,15 +40,15 @@ syllabus-swarm is built on **nine specialized AI agents**, each assigned a model
 
 | Agent | Role | Default Model | Rationale |
 |---|---|---|---|
-| **Intake Specialist** | Interviews the user to extract technical and pedagogical requirements mapped to Dutch SBB Kwalificatiedossiers | `deepseek/deepseek-v4-pro` | Strong reasoning for synthesising rich course context from user answers, with deep knowledge of MBO4 vocational education pathways (BOL/BBL) and kerntaken (P1-K1 through P4-K1). |
-| **Curriculum Architect** | Designs syllabi using the Humanics framework (data literacy, technological literacy, human literacy) + experiential learning | `deepseek/deepseek-v4-pro` | State-of-the-art multi-step reasoning for crafting logically coherent, pedagogically sound syllabi that span weeks of content across three integrated literacies. |
-| **Education Director** | Audits syllabi for time-budget math, realistic MBO4 workloads, and scheduling contradictions before content generation proceeds | `deepseek/deepseek-v4-pro` | Structured analysis and precise feasibility calculations to ensure every syllabus is deliverable within real classroom constraints. |
-| **Theory Instructor** | Transforms abstract syllabus concepts into interactive learning artifacts (HTML/JS visualizations, pausing terminal scripts, Mermaid.js diagrams) | `deepseek/deepseek-v4-pro` | Strong writing + code generation for producing self-contained, runnable interactive artifacts that vocational students can engage with before starting hands-on labs. |
+| **Intake Specialist** | Interviews the user to extract technical and pedagogical requirements mapped to Dutch SBB Kwalificatiedossiers | `openrouter/deepseek/deepseek-v4-pro` | Strong reasoning for synthesising rich course context from user answers, with deep knowledge of MBO4 vocational education pathways (BOL/BBL) and kerntaken (P1-K1 through P4-K1). |
+| **Curriculum Architect** | Designs syllabi using the Humanics framework (data literacy, technological literacy, human literacy) + experiential learning | `openrouter/deepseek/deepseek-v4-pro` | State-of-the-art multi-step reasoning for crafting logically coherent, pedagogically sound syllabi that span weeks of content across three integrated literacies. |
+| **Education Director** | Audits syllabi for time-budget math, realistic MBO4 workloads, and scheduling contradictions before content generation proceeds | `openrouter/deepseek/deepseek-v4-pro` | Structured analysis and precise feasibility calculations to ensure every syllabus is deliverable within real classroom constraints. |
+| **Theory Instructor** | Transforms abstract syllabus concepts into interactive learning artifacts (HTML/JS visualizations, pausing terminal scripts, Mermaid.js diagrams) | `openrouter/deepseek/deepseek-v4-pro` | Strong writing + code generation for producing self-contained, runnable interactive artifacts that vocational students can engage with before starting hands-on labs. |
 | **Lab & Project Developer** | Generates tiered hands-on coding exercises with starter code and fully-commented solution keys | `openrouter/qwen/qwen3-coder` | Purpose-built for programming tasks — produces cleaner starter code, more idiomatic solutions, and fewer hallucinated API calls than general-purpose models. |
 | **QA Reviewer** | Reviews all generated labs for technical correctness (syntax, imports, runnability) and MBO4 didactic appropriateness | `openrouter/qwen/qwen3-coder` | Purpose-built for code understanding and review — catches syntax errors, missing imports, hallucinated variables, and didactic issues before they reach students. |
-| **Media Strategist** | Analyzes curriculum module complexity and routes each module to the optimal instructional modality (text, interactive web, terminal CLI, or Video-as-Code) | `deepseek/deepseek-v4-pro` | Strong pedagogical reasoning for calibrating complexity scores and producing well-justified `ModalityDecision` outputs that drive the entire downstream generation pipeline. |
-| **Video Engineer** | Generates deterministic temporal code (React/Remotion JSX) for educational video compositions — pure structural data, no prose | `deepseek/deepseek-v4-pro` | Balances creative temporal animation design with correct, runnable TypeScript/JSX output; produces `RemotionManifest` descriptors for version-controllable video compositions. |
-| **Output Exporter** | Compiles and packages all materials into clean directory structures and a consolidated manifest | `deepseek/deepseek-v4-flash-latest` | Low-latency, low-cost completions ideal for manifest generation, file assembly, and Markdown packaging — reliability without burning reasoning-token budgets. |
+| **Media Strategist** | Analyzes curriculum module complexity and routes each module to the optimal instructional modality (text, interactive web, terminal CLI, or Video-as-Code) | `openrouter/deepseek/deepseek-v4-pro` | Strong pedagogical reasoning for calibrating complexity scores and producing well-justified `ModalityDecision` outputs that drive the entire downstream generation pipeline. |
+| **Video Engineer** | Generates deterministic temporal code (React/Remotion JSX) for educational video compositions — pure structural data, no prose | `openrouter/deepseek/deepseek-v4-pro` | Balances creative temporal animation design with correct, runnable TypeScript/JSX output; produces `RemotionManifest` descriptors for version-controllable video compositions. |
+| **Output Exporter** | Compiles and packages all materials into clean directory structures and a consolidated manifest | `openrouter/deepseek/deepseek-v4-flash-latest` | Low-latency, low-cost completions ideal for manifest generation, file assembly, and Markdown packaging — reliability without burning reasoning-token budgets. |
 
 ### Pipeline & Output Structure
 
@@ -161,7 +161,7 @@ Every agent obtains its LLM through `src/llm_factory.py` resolving model, temper
 python -m src.llm_factory
 
 # Override a specific agent's model
-AGENT_CURRICULUM_ARCHITECT_MODEL=anthropic/claude-sonnet-4 python src/main.py "Python Basics"
+AGENT_CURRICULUM_ARCHITECT_MODEL=openrouter/anthropic/claude-sonnet-4 python src/main.py "Python Basics"
 
 # Bump QA Reviewer's iteration limit for large output sets
 AGENT_QA_REVIEWER_MAX_ITER=250 python src/main.py "Data Science"
