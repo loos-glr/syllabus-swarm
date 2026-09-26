@@ -123,7 +123,20 @@ _rpm_default: int | None = None
 _DEFAULT_MODEL: str = "openrouter/deepseek/deepseek-v4-pro"
 _DEFAULT_TEMPERATURE: float = 0.2
 _DEFAULT_TOP_P: float = 0.1
-_DEFAULT_MAX_TOKENS: int = 8192
+_DEFAULT_MAX_TOKENS: int = 32768
+# ---------------------------------------------------------------------------
+# Models with built-in reasoning that consume tokens internally before
+# producing visible output.  When these models are configured with
+# max_tokens < 16384, they commonly return NULL content because all
+# tokens are spent on reasoning.
+# ---------------------------------------------------------------------------
+_REASONING_MODEL_PATTERNS: tuple[str, ...] = (
+    "claude-opus-5.5",
+    "claude-opus-5",
+    "claude-sonnet-5",
+    "gpt-5",
+)
+_MIN_SAFE_MAX_TOKENS_REASONING: int = 16384
 # ---------------------------------------------------------------------------
 # Internal helpers
 # ---------------------------------------------------------------------------
@@ -312,6 +325,22 @@ def build_llm_for_agent(
             hardcoded_default=_DEFAULT_MAX_TOKENS,
         )
     )
+
+    # Warn if a reasoning model is configured with low max_tokens.
+    model_lower = model.lower()
+    if any(pattern in model_lower for pattern in _REASONING_MODEL_PATTERNS):
+        if max_tokens < _MIN_SAFE_MAX_TOKENS_REASONING:
+            import warnings
+
+            warnings.warn(
+                f"Agent '{agent_role}' uses reasoning model '{model}' with "
+                f"max_tokens={max_tokens}. Reasoning models consume tokens "
+                f"internally before producing output; values below "
+                f"{_MIN_SAFE_MAX_TOKENS_REASONING} commonly return NULL "
+                f"content. Set AGENT_{agent_role}_MAX_TOKENS >= "
+                f"{_MIN_SAFE_MAX_TOKENS_REASONING} in .env.",
+                stacklevel=2,
+            )
 
     return LLM(
         model=model,

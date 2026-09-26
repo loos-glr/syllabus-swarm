@@ -46,7 +46,7 @@ HARDCODED_MODEL: str = "openrouter/deepseek/deepseek-v4-pro"
 HARDCODED_MODEL_STRIPPED: str = "deepseek/deepseek-v4-pro"
 HARDCODED_TEMPERATURE: float = 0.2
 HARDCODED_TOP_P: float = 0.1
-HARDCODED_MAX_TOKENS: int = 8192
+HARDCODED_MAX_TOKENS: int = 32768
 EXPECTED_DEFAULT_BASE_URL: str = "https://openrouter.ai/api/v1"
 
 _DUMMY_API_KEY: str = "sk-test-dummy-key-for-unit-tests"
