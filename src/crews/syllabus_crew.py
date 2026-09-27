@@ -23,6 +23,8 @@ from __future__ import annotations
 
 import re
 import sys
+import time
+from collections.abc import Callable
 from datetime import UTC, datetime
 from enum import Enum
 from pathlib import Path
@@ -98,8 +100,24 @@ _TIERS: list[tuple[str, str]] = [
 # forcing the operator to decode three separate error lines.
 _MAX_ITER_CREWAI_MARKER: str = "Maximum iterations reached"
 
+# Known markers emitted by CrewAI when an LLM returns no usable content
+# (see ``_validate_and_finalize_llm_response`` in crewai/utilities/agent_utils).
+# This is usually transient — a provider blip, rate limiting, or a model that
+# spent its whole max_tokens budget on internal reasoning before producing
+# visible output — and is distinct from "Maximum iterations reached" above.
+_EMPTY_LLM_RESPONSE_MARKERS: tuple[str, ...] = (
+    "Invalid response from LLM call - None or empty",
+    "Received None or empty response from LLM call",
+)
+
 # Patterns used by :func:`_scan_for_stray_generated_files` to detect
-# agent-generated files that escaped the ``output/`` directory.
+# agent-generated artefacts written straight into the ``output/`` root
+# instead of into a per-run directory (``output/<run_id>/``).
+#
+# NOTE: these patterns are matched against the *immediate children of*
+# ``OUTPUT_ROOT`` only — never against project-root files such as
+# ``README.md``, ``DESIGN.md`` or ``docs/*``, which are permanent
+# repository files and can never be strays.
 _STRAY_PATTERNS: list[tuple[str, str]] = [
     (r"^tier\d", "directory"),
     (r"^tier\d.*", "directory"),
@@ -116,21 +134,28 @@ _STRAY_PATTERNS: list[tuple[str, str]] = [
     (r"\.yml$", "file"),
     (r"\.md$", "file"),
 ]
-# Directories that are permanently at the project root and should never
-# be flagged as strays.
-_STRAY_SAFE_DIRS: frozenset[str] = frozenset(
+
+# Files that legitimately live *directly* under ``output/`` and must therefore
+# never be reported as strays.  Both are produced by
+# :func:`src.exporters.manifest.update_output_manifest`:
+#   * ``README.md``         — the aggregated output manifest.
+#   * ``course_graph.json`` — the optional course-graph export.
+_OUTPUT_ROOT_SAFE_FILES: frozenset[str] = frozenset(
     {
-        ".git",
-        ".pytest_cache",
-        ".ruff_cache",
-        ".roo",
-        ".ruler",
-        ".venv",
-        "__pycache__",
-        "config",
-        "output",
-        "src",
-        "tests",
+        "README.md",
+        "course_graph.json",
+    }
+)
+
+# OS / editor artefacts that regularly appear at the output root and must be
+# ignored by the stray scan.  Listed explicitly (instead of skipping every
+# dotfile) so that genuine strays such as a stray ``.gitignore`` are still
+# detected via ``_STRAY_PATTERNS``.
+_OUTPUT_ROOT_IGNORED_FILES: frozenset[str] = frozenset(
+    {
+        ".DS_Store",
+        "Thumbs.db",
+        "desktop.ini",
     }
 )
 
@@ -191,22 +216,162 @@ def _annotate_iter_exhaustion(
     return "\n".join(parts)
 
 
+def _is_transient_llm_error(exc: BaseException) -> bool:
+    """Return True when *exc* signals a transient LLM failure worth retrying.
+
+    Covers CrewAI's "empty/None response" ``ValueError`` as well as litellm and
+    provider-level errors (rate limiting, timeouts, connection resets).  These
+    are the failures most likely to resolve on a simple retry, in contrast to
+    deterministic errors (e.g. a bad tool name) that would fail again
+    immediately.
+    """
+    msg = str(exc)
+    if any(marker in msg for marker in _EMPTY_LLM_RESPONSE_MARKERS):
+        return True
+
+    if getattr(exc.__class__, "__module__", "").startswith("litellm"):
+        return True
+
+    lowered = msg.lower()
+    for fragment in (
+        "rate limit",
+        "429",
+        "too many requests",
+        "timed out",
+        "timeout",
+        "connection",
+    ):
+        if fragment in lowered:
+            return True
+
+    return False
+
+
+def _annotate_empty_llm_response(raw_error: str, agent_role_env_key: str) -> str:
+    """Append an actionable hint when *raw_error* is an empty LLM response.
+
+    CrewAI raises ``ValueError("Invalid response from LLM call - None or
+    empty.")`` when the model returns no usable content.  Unlike the max-iter
+    hint (see :func:`_annotate_iter_exhaustion`), this is usually a *model or
+    token-budget* problem rather than an iteration-budget problem, so the
+    suggested fixes are different.
+    """
+    if not any(marker in raw_error for marker in _EMPTY_LLM_RESPONSE_MARKERS):
+        return raw_error
+
+    parts: list[str] = [
+        raw_error,
+        "",
+        "─" * 60,
+        "⚠️  EMPTY LLM RESPONSE DETECTED",
+        "",
+        "   CrewAI received None/empty content from the model.  Common causes:",
+        "   1. The model spent its whole max_tokens budget on internal reasoning",
+        "      and produced no visible output (raise the token limit).",
+        "   2. The configured model is unreliable or overloaded (switch models).",
+        "   3. The review context grew too large (review files in batches).",
+        "",
+        "   👉  Try these in .env:",
+        f"       AGENT_{agent_role_env_key}_MAX_TOKENS=16384",
+        f"       AGENT_{agent_role_env_key}_MODEL=<a more stable model>",
+    ]
+    return "\n".join(parts)
+
+
+def _kickoff_with_retry(
+    build_crew: Callable[[], Crew],
+    *,
+    attempts: int = 3,
+    backoff_seconds: float = 2.0,
+    verbose: bool = False,
+) -> object:
+    """Run a crew with bounded retries for transient LLM failures.
+
+    CrewAI's per-agent ``max_retry_limit`` only re-runs a task *within* a
+    single crew.  A whole-crew failure (e.g. the QA Reviewer hitting an empty
+    LLM response after many file reads) currently aborts the run.  This helper
+    re-builds and re-runs the crew a small number of times, sleeping with
+    exponential backoff between attempts, so a single transient provider error
+    no longer kills the pipeline.
+
+    Parameters
+    ----------
+    build_crew : Callable[[], Crew]
+        A zero-arg factory that constructs a fresh ``Crew``.  Rebuilding on
+        each attempt avoids reusing per-execution state from a failed run.
+    attempts : int
+        Maximum number of kickoff attempts (default 3).
+    backoff_seconds : float
+        Initial backoff delay, doubled on each retry.
+    verbose : bool
+        When True, log each retry to stderr.
+
+    Returns
+    -------
+    object
+        The result of ``crew.kickoff()`` on success (typically a
+        ``CrewOutput``).
+
+    Raises
+    ------
+    The last exception if all attempts are exhausted, or immediately if the
+    error is not classified as transient.
+    """
+    last_exc: BaseException | None = None
+    for attempt in range(1, attempts + 1):
+        try:
+            crew = build_crew()
+            return crew.kickoff()
+        except Exception as exc:  # noqa: BLE001 — re-raised after attempts
+            last_exc = exc
+            if attempt >= attempts or not _is_transient_llm_error(exc):
+                raise
+            delay = backoff_seconds * (2 ** (attempt - 1))
+            if verbose:
+                print(
+                    f"  ⚠️  Transient LLM failure on attempt {attempt}/{attempts} "
+                    f"({type(exc).__name__}); retrying in {delay:.0f}s…",
+                    file=sys.stderr,
+                )
+            time.sleep(delay)
+
+    # Unreachable in practice (the loop either returns or raises); this
+    # satisfies type checkers and guards against future refactors.
+    assert last_exc is not None
+    raise last_exc
+
+
 def _scan_for_stray_generated_files(
     *,
     run_id: str,
     verbose: bool = False,
 ) -> list[str]:
-    """Detect agent-generated files that escaped the ``output/`` tree.
+    """Detect agent-generated files written straight into the ``output/`` root.
 
-    LLM agents can sometimes write files (via the low-level ``write-file``
-    command) to the project root instead of under ``output/<run_id>/``.
-    This scanner checks for common generated-file patterns at the project
-    root and returns a list of warnings.
+    Every generated artefact belongs **inside** a per-run directory
+    (``output/<run_id>/``).  When an agent bypasses the ``write-labs`` /
+    ``write-syllabus`` commands and writes directly into ``output/``, the
+    shared output root is polluted with loose artefacts (``index.html``,
+    ``tier1_foundations/``, …) that are mistaken for — or mixed up with —
+    run folders.
+
+    The scan is deliberately scoped to the **immediate children of
+    ``OUTPUT_ROOT``** and never looks anywhere else.  Permanent repository
+    files at the project root (``README.md``, ``DESIGN.md``, ``.gitignore``,
+    ``docs/``, …) are therefore never inspected and can never be reported,
+    and content nested inside a run directory is — by definition — in the
+    correct location and is not inspected either.
+
+    The two files that *do* legitimately live at the output root
+    (``output/README.md`` and ``output/course_graph.json``, both written by
+    :func:`src.exporters.manifest.update_output_manifest`) are whitelisted
+    via ``_OUTPUT_ROOT_SAFE_FILES``.
 
     Parameters
     ----------
     run_id : str
-        The per-run identifier used for this pipeline execution.
+        The per-run identifier used for this pipeline execution.  Its
+        directory (``output/<run_id>/``) is never reported.
     verbose : bool
         When ``True``, prints the warnings to stderr immediately.
 
@@ -216,27 +381,37 @@ def _scan_for_stray_generated_files(
         Human-readable warning strings (one per stray).  Empty if clean.
     """
     warnings_list: list[str] = []
-    root = _PROJECT_ROOT
+    output_root = OUTPUT_ROOT
 
-    for entry in sorted(root.iterdir()):
+    # Nothing to scan when no run has produced output yet.
+    if not output_root.is_dir():
+        return warnings_list
+
+    for entry in sorted(output_root.iterdir()):
         name = entry.name
 
-        # Skip known project directories and dot-files that are not generated.
-        if entry.is_dir() and name in _STRAY_SAFE_DIRS:
+        # 1. The current run directory is exactly where generated artefacts
+        #    belong, so it is never a stray.
+        if name == run_id:
             continue
-        # Skip hidden files/dirs that aren't in our pattern list.
-        if name.startswith(".") and entry.is_dir():
+        # 2. Files that legitimately live directly under output/ (the
+        #    aggregate manifest and the optional course graph).
+        if name in _OUTPUT_ROOT_SAFE_FILES:
+            continue
+        # 3. OS / editor artefacts (e.g. .DS_Store) are not generated by us.
+        #    NOTE: this is an explicit ignore-list rather than a blanket
+        #    "skip dotfiles" rule, so genuine strays such as a stray
+        #    ``.gitignore`` are still detected via ``_STRAY_PATTERNS``.
+        if name in _OUTPUT_ROOT_IGNORED_FILES:
             continue
 
-        matched = False
         for pattern, kind in _STRAY_PATTERNS:
             if re.search(pattern, name):
-                matched = True
                 msg = (
                     f"⚠️  Stray generated {kind} detected: {entry}\n"
-                    f"   This file was likely written by an agent directly to the\n"
-                    f"   project root instead of under output/{run_id}/\n"
-                    f"   To clean up:  git clean -fd {name}\n"
+                    f"   This {kind} was written directly into output/ instead\n"
+                    f"   of under output/{run_id}/\n"
+                    f"   To clean up:  rm -rf '{entry}'\n"
                     f"   To prevent recurrence: ensure all agents use the\n"
                     f"   'write-labs' command with 'run_id' instead of 'write-file'."
                 )
@@ -244,23 +419,6 @@ def _scan_for_stray_generated_files(
                 if verbose:
                     print(msg, file=sys.stderr)
                 break
-
-        if not matched and entry.is_dir():
-            # Recurse one level for nested structures like tier2_application/user_data_cli/
-            for sub in sorted(entry.iterdir()):
-                for pattern, kind in _STRAY_PATTERNS:
-                    if re.search(pattern, sub.name):
-                        msg = (
-                            f"⚠️  Stray generated {kind} detected: {sub}\n"
-                            f"   Nested inside stray directory: {entry}\n"
-                            f"   To clean up:  git clean -fd {name}/\n"
-                            f"   To prevent recurrence: ensure all agents use the\n"
-                            f"   'write-labs' command with 'run_id' instead of 'write-file'."
-                        )
-                        warnings_list.append(msg)
-                        if verbose:
-                            print(msg, file=sys.stderr)
-                        break
 
     return warnings_list
 
@@ -1252,8 +1410,24 @@ def run_syllabus_crew(
     if skip_qa or (not labs_ok and not theory_ok):
         qa_ok = True  # Nothing to review, or explicitly skipped.
     elif lab_dev is not None or theory_instructor is not None:
-        try:
-            qa_reviewer = get_qa_reviewer(verbose=verbose)
+        # The QA Reviewer is a singleton (get_qa_reviewer) and the Lab
+        # Developer / Theory Instructor objects are reused across the run, so
+        # the agent list is built once.  The Crew + Task are rebuilt on each
+        # retry attempt by the factory passed to _kickoff_with_retry, so a
+        # single transient LLM failure doesn't abort the whole review.
+        qa_reviewer = get_qa_reviewer(verbose=verbose)
+
+        # CRITICAL: All agents that may receive delegation MUST be in
+        # the SAME Crew array.  The QA Reviewer delegates lab fixes to
+        # the Lab Developer and theory fixes to the Theory Instructor.
+        qa_agents: list[Agent] = []
+        if lab_dev is not None:
+            qa_agents.append(lab_dev)
+        if theory_instructor is not None:
+            qa_agents.append(theory_instructor)
+        qa_agents.append(qa_reviewer)
+
+        def _build_qa_crew() -> Crew:
             qa_task = create_qa_review_task(
                 agent=qa_reviewer,
                 course_name=course_name,
@@ -1265,24 +1439,20 @@ def run_syllabus_crew(
                 ),
                 verbose=verbose,
             )
-
-            # CRITICAL: All agents that may receive delegation MUST be in
-            # the SAME Crew array.  The QA Reviewer delegates lab fixes to
-            # the Lab Developer and theory fixes to the Theory Instructor.
-            qa_agents: list[Agent] = []
-            if lab_dev is not None:
-                qa_agents.append(lab_dev)
-            if theory_instructor is not None:
-                qa_agents.append(theory_instructor)
-            qa_agents.append(qa_reviewer)
-
-            qa_crew = Crew(
+            return Crew(
                 agents=qa_agents,
                 tasks=[qa_task],
                 process=Process.sequential,
                 verbose=verbose,
             )
-            qa_result = qa_crew.kickoff()
+
+        try:
+            qa_result = _kickoff_with_retry(
+                _build_qa_crew,
+                attempts=3,
+                backoff_seconds=2.0,
+                verbose=verbose,
+            )
             qa_report = (qa_result.raw if hasattr(qa_result, "raw") else str(qa_result)).strip()
 
             if qa_report:
@@ -1314,15 +1484,18 @@ def run_syllabus_crew(
 
         except Exception as exc:
             qa_error = _annotate_iter_exhaustion(
-                str(exc),
+                _annotate_empty_llm_response(str(exc), "QA_REVIEWER"),
                 "QA_REVIEWER",
                 parent_error=exc,
             )
             if verbose:
                 print(f"  ❌  QA Review failed: {exc}", file=sys.stderr)
 
-    # ── 5. Post-run sanity: scan for stray generated files ─────────────
-    strays = _scan_for_stray_generated_files(run_id=run_id, verbose=verbose)
+    # ── 5. Post-run sanity: scan output/ for stray generated files ─────
+    # NOTE: ``_active_run_id`` (not the raw ``run_id`` argument) is the
+    # resolved identifier — it is always populated, whereas the argument is
+    # None for fresh runs that let the crew generate its own run id.
+    strays = _scan_for_stray_generated_files(run_id=_active_run_id, verbose=verbose)
     if strays and verbose:
         print(f"\n  🔍  Stray file scan: {len(strays)} issue(s) found above.", file=sys.stderr)
 

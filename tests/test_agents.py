@@ -452,6 +452,24 @@ class TestCreateQaReviewer:
             agent = create_qa_reviewer(max_rpm=20)
             assert agent.max_rpm == 20
 
+    def test_max_retry_limit_defaults_to_five(self, mock_llm: MagicMock) -> None:
+        """The agent has max_retry_limit=5 (matching the other tool-using agents)."""
+        with patch(
+            "src.agents.qa_reviewer.build_llm_for_agent",
+            return_value=mock_llm,
+        ):
+            agent = create_qa_reviewer()
+            assert agent.max_retry_limit == 5
+
+    def test_max_retry_limit_can_be_overridden(self, mock_llm: MagicMock) -> None:
+        """An explicit max_retry_limit argument is honoured."""
+        with patch(
+            "src.agents.qa_reviewer.build_llm_for_agent",
+            return_value=mock_llm,
+        ):
+            agent = create_qa_reviewer(max_retry_limit=3)
+            assert agent.max_retry_limit == 3
+
     def test_verbose_defaults_to_false(self, mock_llm: MagicMock) -> None:
         """verbose is False by default."""
         with patch(
