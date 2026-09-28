@@ -27,6 +27,7 @@ from src.evaluators.modality_router import (
 from src.evaluators.qa_scorer import (
     LAB_CRITERIA,
     THEORY_CRITERIA,
+    QAScoring,
     default_qa_rubric,
     qa_needs_review,
     qa_passed,
@@ -526,3 +527,85 @@ class TestDecisionModels:
         assert decision.probabilities == {}
         assert decision.model_version is None
         assert decision.needs_review is False
+
+
+# ---------------------------------------------------------------------------
+# Orchestrator decision helpers (src.crews.syllabus_crew)
+# ---------------------------------------------------------------------------
+
+
+class TestOrchestratorDecisionHelpers:
+    """The crew's deterministic helpers must be side-effect free and testable."""
+
+    def test_collect_qa_artifacts_reads_text_files(self, tmp_path) -> None:
+        from src.crews.syllabus_crew import _collect_qa_artifacts  # noqa: PLC0415
+
+        tier = tmp_path / "labs" / "tier1_foundations"
+        (tier / "starter").mkdir(parents=True)
+        (tier / "theory").mkdir()
+        (tier / "starter" / "lab1.py").write_text("print(1)\n")
+        (tier / "starter" / "lab2.js").write_text("console.log(1)\n")
+        (tier / "theory" / "demo.html").write_text("<html></html>\n")
+        (tier / "starter" / ".hidden").write_text("secret\n")
+        (tier / "starter" / "image.png").write_bytes(b"\x89PNG")
+
+        refs = [ref for ref, _ in _collect_qa_artifacts(tmp_path)]
+
+        assert "labs/tier1_foundations/starter/lab1.py" in refs
+        assert "labs/tier1_foundations/starter/lab2.js" in refs
+        assert "labs/tier1_foundations/theory/demo.html" in refs
+        assert not any(ref.endswith(".hidden") for ref in refs)
+        assert not any(ref.endswith(".png") for ref in refs)
+
+    def test_collect_qa_artifacts_on_missing_dir_returns_empty(self, tmp_path) -> None:
+        from src.crews.syllabus_crew import _collect_qa_artifacts  # noqa: PLC0415
+
+        assert _collect_qa_artifacts(tmp_path) == []
+
+    def test_collect_qa_artifacts_respects_limit(self, tmp_path) -> None:
+        from src.crews.syllabus_crew import _collect_qa_artifacts  # noqa: PLC0415
+
+        tier = tmp_path / "labs" / "tier1_foundations" / "starter"
+        tier.mkdir(parents=True)
+        for i in range(5):
+            (tier / f"lab{i}.py").write_text("x = 1\n")
+
+        assert len(_collect_qa_artifacts(tmp_path, limit=3)) == 3
+
+    def test_collect_qa_artifacts_skips_undecodable_files(self, tmp_path) -> None:
+        from src.crews.syllabus_crew import _collect_qa_artifacts  # noqa: PLC0415
+
+        tier = tmp_path / "labs" / "tier1" / "starter"
+        tier.mkdir(parents=True)
+        (tier / "broken.py").write_bytes(b"\xff\xfe\x00")
+        (tier / "ok.py").write_text("x = 1\n")
+
+        refs = [ref for ref, _ in _collect_qa_artifacts(tmp_path)]
+        assert refs == ["labs/tier1/starter/ok.py"]
+
+    def test_build_qa_helpers_use_the_injected_system_one_client(self, patch_system_one) -> None:
+        from src.crews.syllabus_crew import (  # noqa: PLC0415
+            _build_qa_scorer,
+            _build_syllabus_gate,
+        )
+
+        scorer = _build_qa_scorer()
+        gate = _build_syllabus_gate()
+        assert isinstance(scorer, QAScoring)
+        assert gate is not None
+        assert patch_system_one.called
+
+    def test_build_helpers_return_none_without_a_client(self) -> None:
+        from unittest.mock import patch  # noqa: PLC0415
+
+        from src.crews.syllabus_crew import (  # noqa: PLC0415
+            _build_qa_scorer,
+            _build_syllabus_gate,
+        )
+
+        with patch(
+            "src.crews.syllabus_crew.build_system_one_client",
+            return_value=None,
+        ):
+            assert _build_qa_scorer() is None
+            assert _build_syllabus_gate() is None

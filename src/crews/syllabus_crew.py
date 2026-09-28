@@ -237,6 +237,7 @@ class FatalLLMError(RuntimeError):
         self.agent_role = agent_role
         self.stage = stage
 
+
 # Patterns used by :func:`_scan_for_stray_generated_files` to detect
 # agent-generated artefacts written straight into the ``output/`` root
 # instead of into a per-run directory (``output/<run_id>/``).
@@ -492,11 +493,7 @@ def _kickoff_with_retry(
         The last exception when retryable attempts are exhausted, or
         immediately for deterministic errors.
     """
-    futile_budget = (
-        futile_attempts
-        if futile_attempts is not None
-        else _resolve_futile_attempts()
-    )
+    futile_budget = futile_attempts if futile_attempts is not None else _resolve_futile_attempts()
     last_exc: BaseException | None = None
     futile_seen = 0
 
@@ -643,9 +640,7 @@ class _FatalAbortGuard:
             self._stage = stage
             self._agent_role = agent_role
             self._detail = _annotate_empty_llm_response(str(exc), agent_role)
-            _print_abort_banner(
-                stage=stage, agent_role=agent_role, detail=self._detail
-            )
+            _print_abort_banner(stage=stage, agent_role=agent_role, detail=self._detail)
         return self.reason or ""
 
     def should_skip(self, stage_label: str) -> bool:
@@ -767,9 +762,7 @@ def _run_live_model_probe(
                 )
 
     if fatal and strict:
-        details = "\n".join(
-            f"  ⛔  {result.model}  ({result.detail})" for result in fatal
-        )
+        details = "\n".join(f"  ⛔  {result.model}  ({result.detail})" for result in fatal)
         print(
             "\n"
             + "=" * 74
@@ -1250,12 +1243,40 @@ def _build_qa_scorer() -> QAScoring | None:
 
 
 def _collect_qa_artifacts(run_dir: Path, *, limit: int = 40) -> list[tuple[str, str]]:
-    """Collect ``(content_ref, content)`` pairs from ``labs/`` and ``theory/``.
+    """Collect ``(content_ref, content)`` pairs from the run's ``labs/`` tree.
 
-    Only text artifacts are collected (Markdown, HTML, shell, JS/TS), and the
-    list is capped at *limit* entries to bound the cost of a QA pass.
+    Only text artifacts are collected (Markdown, HTML, shell, and the source
+    languages used across the cohort profiles), and the list is capped at
+    *limit* entries to bound the cost of a QA pass.
     """
-    suffixes = {".md", ".html", ".htm", ".sh", ".js", ".ts", ".tsx", ".jsx", ".txt"}
+    suffixes = {
+        # docs & web
+        ".md",
+        ".markdown",
+        ".html",
+        ".htm",
+        ".txt",
+        # scripts & shell
+        ".sh",
+        ".bash",
+        # javascript / typescript
+        ".js",
+        ".mjs",
+        ".cjs",
+        ".jsx",
+        ".ts",
+        ".tsx",
+        # other profile languages
+        ".py",
+        ".php",
+        ".java",
+        ".cs",
+        ".sql",
+        # structured config
+        ".json",
+        ".yml",
+        ".yaml",
+    }
     artifacts: list[tuple[str, str]] = []
     labs_dir = run_dir / "labs"
     if not labs_dir.exists():
@@ -1269,15 +1290,14 @@ def _collect_qa_artifacts(run_dir: Path, *, limit: int = 40) -> list[tuple[str, 
         if path.suffix.lower() not in suffixes:
             continue
         try:
-            content = path.read_text(encoding="utf-8", errors="replace")
-        except OSError:
+            content = path.read_text(encoding="utf-8")
+        except (OSError, UnicodeDecodeError):
             continue
-        artifacts.append((str(path.relative_to(run_dir)), content))
+        artifacts.append((str(path.relative_to(run_dir).as_posix()), content))
     return artifacts
 
 
 def run_syllabus_crew(
-
     course_context: str,
     *,
     course_name: str = "",
@@ -1363,9 +1383,7 @@ def run_syllabus_crew(
             raise FatalLLMError(
                 "Pre-flight configuration audit failed: "
                 + "; ".join(
-                    issue.message
-                    for issue in preflight_issues
-                    if issue.severity == "fatal"
+                    issue.message for issue in preflight_issues if issue.severity == "fatal"
                 ),
                 stage="pre-flight",
             )
@@ -1374,9 +1392,7 @@ def run_syllabus_crew(
     # Catches a *broken model* — one that answers a tool-calling request with
     # nothing — before a single generation credit is spent.
     if probe_enabled():
-        fatal_probes = fatal_probe_results(
-            _run_live_model_probe(verbose=verbose, strict=True)
-        )
+        fatal_probes = fatal_probe_results(_run_live_model_probe(verbose=verbose, strict=True))
         if fatal_probes:
             raise FatalLLMError(
                 "Pre-flight model probe failed: "
@@ -1598,9 +1614,8 @@ def run_syllabus_crew(
                     # Deterministic gate is authoritative.
                     syllabus_review_ok = gate_decision.complete
                     if not syllabus_review_ok:
-                        syllabus_review_error = (
-                            "System One gate flagged blockers: "
-                            + ", ".join(gate_decision.blockers)
+                        syllabus_review_error = "System One gate flagged blockers: " + ", ".join(
+                            gate_decision.blockers
                         )
                 elif syllabus_review_report:
                     syllabus_review_ok = True
@@ -1748,8 +1763,7 @@ def run_syllabus_crew(
                     )
                     if verbose:
                         print(
-                            f"  ⛔  Theory for {tier_dir_name} aborted — "
-                            "remaining tiers skipped.",
+                            f"  ⛔  Theory for {tier_dir_name} aborted — remaining tiers skipped.",
                             file=sys.stderr,
                         )
                     break
@@ -2041,12 +2055,8 @@ def run_syllabus_crew(
 
                 except Exception as exc:
                     if _is_futile_llm_error(exc) or isinstance(exc, FatalLLMError):
-                        _trip_guard(
-                            f"Labs ({tier_name})", "LAB_DEVELOPER", exc
-                        )
-                        print(
-                            f"  ⛔  {tier_name}: aborted — remaining tiers skipped."
-                        )
+                        _trip_guard(f"Labs ({tier_name})", "LAB_DEVELOPER", exc)
+                        print(f"  ⛔  {tier_name}: aborted — remaining tiers skipped.")
                     else:
                         print(f"  ❌  {tier_name}: {exc}")
                     return False

@@ -77,22 +77,20 @@ def patch_system_one(fake_system_one: FakeSystemOneClient) -> MagicMock:
 
     Both the factory (used by the lazy evaluator singletons) and the module-level
     binding inside ``src.crews.syllabus_crew`` are patched so tests can exercise
-    the orchestrator's deterministic paths without a live API key.
+    the orchestrator's deterministic paths without a live API key.  The yielded
+    mock is the orchestrator-facing patch, which is the one callers can assert on.
     """
     import src.crews.syllabus_crew as syllabus_crew  # noqa: PLC0415
 
     with (
-        patch(
-            "src.llm_factory.build_system_one_client",
-            return_value=fake_system_one,
-        ) as factory_patch,
+        patch("src.llm_factory.build_system_one_client", return_value=fake_system_one),
         patch.object(
             syllabus_crew,
             "build_system_one_client",
             return_value=fake_system_one,
-        ),
+        ) as orchestrator_patch,
     ):
-        yield factory_patch
+        yield orchestrator_patch
 
 
 # ---------------------------------------------------------------------------
