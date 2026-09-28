@@ -28,6 +28,12 @@ openai==2.54.0
 # provider prefix).  See https://docs.crewai.com/en/learn/llm-connections
 litellm==1.97.0
 
+# --- System One (Jev) Deterministic Decision Model ---
+# Non-generative evaluation client used for modality routing, QA scoring and
+# syllabus gating.  Imported lazily by src/system_one.py, so the pipeline
+# still runs without it (degraded offline mode via SYSTEM_ONE_ENABLED=0).
+typesafe-sdk==0.7.2
+
 # --- Environment Variable Management (.env loader) ---
 python-dotenv==1.2.3
 

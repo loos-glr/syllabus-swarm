@@ -19,10 +19,6 @@ from src.agents.lab_developer import (
     create_lab_developer,  # noqa: F401 — re-exported for external use
     get_lab_developer,  # noqa: F401 — re-exported for external use
 )
-from src.agents.media_strategist import (
-    create_media_strategist,  # noqa: F401 — re-exported for external use
-    get_media_strategist,  # noqa: F401 — re-exported for external use
-)
 from src.agents.presentation_designer import (
     create_presentation_designer,  # noqa: F401 — re-exported for external use
     get_presentation_designer,  # noqa: F401 — re-exported for external use

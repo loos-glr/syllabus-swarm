@@ -226,7 +226,8 @@ class CourseGraph(BaseModel):
 class ModalityType(str, Enum):
     """Pedagogical modality for content delivery.
 
-    Used by the Media Strategist agent to route curriculum modules
+    Used by the deterministic modality router
+    (:mod:`src.evaluators.modality_router`) to route curriculum modules
     to the appropriate content generator.
 
     Values
@@ -248,16 +249,24 @@ class ModalityType(str, Enum):
 
 
 # ---------------------------------------------------------------------------
-# ModalityDecision — Media Strategist routing output
+# ModalityDecision — deterministic routing output (System One)
 # ---------------------------------------------------------------------------
 
 
 class ModalityDecision(BaseModel):
-    """Output of the Media Strategist agent — routes a module to a generator.
+    """Typed routing decision for a curriculum module.
 
-    Each curriculum module receives exactly one ModalityDecision that
-    the swarm state machine reads to determine whether to invoke the
-    Theory Instructor (CLASSIC_READER) or Video Engineer (VIDEO_AS_CODE).
+    Each curriculum module receives exactly one ``ModalityDecision`` that the
+    swarm state machine reads to determine whether to invoke the Theory
+    Instructor (``CLASSIC_READER`` / ``INTERACTIVE_WEB`` / ``INTERACTIVE_CLI``)
+    or the Video Engineer (``VIDEO_AS_CODE``).
+
+    The decision is produced by
+    :func:`src.evaluators.modality_router.route_module` using the deterministic
+    System One model, **not** by an LLM.  The optional provenance fields
+    (``confidence``, ``probabilities``, ``model_version``) are populated from
+    the System One answer so callers can apply confidence-gated escalation
+    without parsing prose.
     """
 
     module_name: str = Field(
@@ -268,7 +277,8 @@ class ModalityDecision(BaseModel):
         description="Selected pedagogical modality for this module.",
     )
     rationale: str = Field(
-        description="Pedagogical justification for the modality choice.",
+        description="Pedagogical justification for the modality choice, emitted "
+        "deterministically from the typed decision — never generated prose.",
         min_length=1,
     )
     complexity_score: float = Field(
@@ -280,6 +290,141 @@ class ModalityDecision(BaseModel):
         default_factory=list,
         description="Suggested visual/code components for the chosen modality.",
     )
+    # ── System One provenance ──────────────────────────────────────────
+    confidence: float | None = Field(
+        default=None,
+        ge=0.0,
+        le=1.0,
+        description="System One confidence in the selected modality (0.0–1.0). "
+        "``None`` when the decision came from a non-System-One source.",
+    )
+    probabilities: dict[str, float] = Field(
+        default_factory=dict,
+        description="Per-option probabilities returned by the System One "
+        "``choice`` primitive, keyed by modality value.",
+    )
+    model_version: str | None = Field(
+        default=None,
+        description="Version of the System One model that produced this decision.",
+    )
+    needs_review: bool = Field(
+        default=False,
+        description="True when confidence fell below the configured threshold "
+        "and the decision should be escalated for review.",
+    )
+
+
+# ---------------------------------------------------------------------------
+# System One evaluation schemas — RubricCriterion / QAScore / SyllabusGateDecision
+# ---------------------------------------------------------------------------
+
+
+class RubricCriterion(BaseModel):
+    """A single scored dimension of an evaluation rubric.
+
+    The ordered ``levels`` list is passed verbatim to the System One ``score``
+    primitive (lowest level first) so the model rates an artifact against a
+    fixed, typed scale instead of inventing prose.
+    """
+
+    key: str = Field(description="Stable machine identifier (e.g. 'technical_correctness').")
+    label: str = Field(description="Human-readable criterion name.")
+    description: str = Field(description="What the criterion measures.")
+    levels: list[str] = Field(
+        min_length=2,
+        max_length=10,
+        description="Ordered rubric level descriptions, lowest first (2–10 levels).",
+    )
+    weight: float = Field(
+        default=1.0,
+        gt=0.0,
+        description="Relative weight when aggregating criterion scores.",
+    )
+
+
+class QAScore(BaseModel):
+    """Typed quality-assurance score for one generated artifact.
+
+    Produced by :func:`src.evaluators.qa_scorer.score_artifact`.  The
+    ``verdict`` is the authoritative pass/fail signal consumed by the
+    orchestrator — the generative LLM is never asked to judge.
+    """
+
+    content_ref: str = Field(
+        description="Stable reference to the scored artifact (file path or module id)."
+    )
+    score: float = Field(
+        description="Weighted mean of the per-criterion scores on the rubric scale.",
+    )
+    confidence: float | None = Field(
+        default=None,
+        ge=0.0,
+        le=1.0,
+        description="Confidence in the overall verdict (0.0–1.0).",
+    )
+    per_criterion: dict[str, float] = Field(
+        default_factory=dict,
+        description="Individual criterion scores keyed by RubricCriterion.key.",
+    )
+    verdict: Literal["pass", "needs_fixes"] = Field(
+        description="Authoritative pass/fail verdict.",
+    )
+    flags: list[str] = Field(
+        default_factory=list,
+        description="Stable machine identifiers for the issues found (never prose).",
+    )
+    model_version: str | None = Field(
+        default=None,
+        description="Version of the System One model that produced this score.",
+    )
+    needs_review: bool = Field(
+        default=False,
+        description="True when confidence fell below the configured threshold "
+        "and the score should be escalated to a human.",
+    )
+
+
+class SyllabusGateDecision(BaseModel):
+    """Typed completeness/quality gate for a generated syllabus.
+
+    Produced by :func:`src.evaluators.syllabus_gate.assess_syllabus`.  The
+    orchestrator advances the workflow **only** when ``complete`` is True.
+    Time-budget arithmetic is computed in plain Python — never by the model.
+    """
+
+    complete: bool = Field(
+        description="True when the syllabus is complete and coherent enough to advance.",
+    )
+    probability: float = Field(
+        ge=0.0,
+        le=1.0,
+        description="System One ``noul`` probability that the syllabus is complete.",
+    )
+    confidence: float | None = Field(
+        default=None,
+        ge=0.0,
+        le=1.0,
+        description="Confidence in the quality score (0.0–1.0).",
+    )
+    quality_score: float | None = Field(
+        default=None,
+        description="Overall pedagogical quality score on the rubric scale.",
+    )
+    blockers: list[str] = Field(
+        default_factory=list,
+        description="Stable machine identifiers for the failing checks — consumed "
+        "by the orchestrator to schedule a targeted rewrite.",
+    )
+    model_version: str | None = Field(
+        default=None,
+        description="Version of the System One model that produced this gate.",
+    )
+    needs_review: bool = Field(
+        default=False,
+        description="True when the gate is uncertain and should be escalated to a human.",
+    )
+
+
 
 
 # ---------------------------------------------------------------------------

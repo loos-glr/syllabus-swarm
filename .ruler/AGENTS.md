@@ -34,7 +34,8 @@ agent = Agent(role="...", goal="...", llm=llm, ...)
 Available role constants:
 `CURRICULUM_ARCHITECT`, `LAB_DEVELOPER`, `OUTPUT_EXPORTER`,
 `INTAKE_SPECIALIST`, `QA_REVIEWER`, `THEORY_INSTRUCTOR`,
-`EDUCATION_DIRECTOR`, `MEDIA_STRATEGIST`, `VIDEO_ENGINEER`.
+`EDUCATION_DIRECTOR`, `VIDEO_ENGINEER`, `INSTRUCTIONAL_COORDINATOR`,
+`PRESENTATION_DESIGNER`.
 
 The factory handles the 3-tier fallback chain (per-agent override →
 agent-wide default → hardcoded sensible default) and always
@@ -42,6 +43,30 @@ targets `https://openrouter.ai/api/v1`.
 
 When adding a new agent, register its role constant in `src/llm_factory.py`
 and use `build_llm_for_agent(YOUR_ROLE)` — never hardcode model IDs.
+
+---
+
+## System One (Jev) Decision Layer — CRITICAL
+
+Routing, QA scoring and syllabus gating are **not** LLM judgments. They are
+deterministic decisions produced by the non-generative System One model.
+
+- **Client:** obtain it through `build_system_one_client(task=...)` in
+  `src/llm_factory.py` — never instantiate `TypeSafeClient` directly.
+  Decision-task constants: `MODALITY_ROUTER`, `QA_SCORER`, `SYLLABUS_GATE`.
+- **Use cases:** `src/evaluators/` — `modality_router`, `qa_scorer`,
+  `syllabus_gate`. Agents and tasks must **consume** these results, never
+  re-judge them in a prompt.
+- **Typed outputs only:** decisions return `ModalityDecision`, `QAScore` or
+  `SyllabusGateDecision`. Never parse prose to make a control-flow decision.
+- **No math in the model:** counting, arithmetic and exact rules stay in plain
+  Python (see `theory_validator.py`, `check_required_sections`).
+- **Escalate, don't guess:** respect `confidence` / `needs_review`; a decision
+  below the configured threshold must be escalated, not silently applied.
+- **Retired agents:** `media_strategist` was removed because its entire role
+  was the routing decision. Do not reintroduce LLM-based decision agents.
+- **Tests:** use the `FakeSystemOneClient` (or the `fake_system_one` /
+  `patch_system_one` fixtures in `tests/conftest.py`); never hit the network.
 
 ---
 

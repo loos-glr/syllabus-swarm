@@ -30,17 +30,28 @@ from src.llm_factory import (
     CURRICULUM_ARCHITECT,
     EDUCATION_DIRECTOR,
     LAB_DEVELOPER,
+    MODALITY_ROUTER,
     OUTPUT_EXPORTER,
     QA_REVIEWER,
+    SYLLABUS_GATE,
+    SYSTEM_ONE,
     THEORY_INSTRUCTOR,
     ConfigIssue,
     audit_agent_config,
     audit_agent_configs,
     build_llm_for_agent,
+    build_system_one_client,
     format_config_issues,
     get_effective_config,
+    get_effective_system_one_config,
     has_fatal_config_issues,
+    resolve_system_one_api_key,
+    resolve_system_one_base_url,
+    resolve_system_one_model,
+    resolve_system_one_timeout,
+    system_one_enabled,
 )
+from src.system_one import SystemOneError
 
 # ---------------------------------------------------------------------------
 # Expected hardcoded defaults (tier 4) — mirrored from src/llm_factory.py.
@@ -468,4 +479,98 @@ class TestConfigIssueReporting:
 
     def test_format_config_issues_empty_input(self) -> None:
         assert format_config_issues([]) == ""
+
+
+# ═══════════════════════════════════════════════════════════════════════
+# System One (Jev) — non-generative decision client
+# ═══════════════════════════════════════════════════════════════════════
+
+
+class TestSystemOneDecisionClient:
+    """The decision client follows the same env discipline as the LLM factory."""
+
+    def test_defaults(self) -> None:
+        with patch.dict(os.environ, {}, clear=True):
+            assert resolve_system_one_model() == "jev-latest"
+            assert resolve_system_one_base_url() == "https://api.typesafe.ai"
+            assert resolve_system_one_timeout() == 10.0
+            assert system_one_enabled() is True
+
+    def test_env_overrides(self) -> None:
+        env = {
+            "SYSTEM_ONE_MODEL": "jev-1.13",
+            "SYSTEM_ONE_BASE_URL": "https://localhost:9999",
+            "SYSTEM_ONE_TIMEOUT": "2.5",
+        }
+        with patch.dict(os.environ, env, clear=True):
+            assert resolve_system_one_model() == "jev-1.13"
+            assert resolve_system_one_base_url() == "https://localhost:9999"
+            assert resolve_system_one_timeout() == 2.5
+
+    def test_per_task_model_override_wins(self) -> None:
+        env = {
+            "SYSTEM_ONE_MODEL": "jev-latest",
+            "SYSTEM_ONE_MODALITY_ROUTER_MODEL": "jev-fast",
+        }
+        with patch.dict(os.environ, env, clear=True):
+            assert resolve_system_one_model(MODALITY_ROUTER) == "jev-fast"
+            assert resolve_system_one_model(SYLLABUS_GATE) == "jev-latest"
+
+    def test_invalid_timeout_falls_back_to_default(self) -> None:
+        with patch.dict(os.environ, {"SYSTEM_ONE_TIMEOUT": "nonsense"}, clear=True):
+            assert resolve_system_one_timeout() == 10.0
+
+    def test_api_key_precedence(self) -> None:
+        with patch.dict(os.environ, {"TYPESAFE_API_KEY": "tk"}, clear=True):
+            assert resolve_system_one_api_key() == "tk"
+        env = {"SYSTEM_ONE_API_KEY": "sk", "TYPESAFE_API_KEY": "tk"}
+        with patch.dict(os.environ, env, clear=True):
+            assert resolve_system_one_api_key() == "sk"
+
+    @pytest.mark.parametrize("value", ["0", "false", "no", "off", "FALSE", "Off"])
+    def test_disabled_values(self, value: str) -> None:
+        with patch.dict(os.environ, {"SYSTEM_ONE_ENABLED": value}, clear=True):
+            assert system_one_enabled() is False
+
+    def test_build_returns_none_without_key(self) -> None:
+        with patch.dict(os.environ, {}, clear=True):
+            assert build_system_one_client() is None
+
+    def test_build_returns_degraded_fake_when_disabled(self) -> None:
+        from src.system_one import FakeSystemOneClient  # noqa: PLC0415
+
+        with patch.dict(os.environ, {"SYSTEM_ONE_ENABLED": "0"}, clear=True):
+            client = build_system_one_client(task=MODALITY_ROUTER)
+        assert isinstance(client, FakeSystemOneClient)
+
+    def test_build_requires_sdk_when_key_present(self) -> None:
+        """With a key but no ``typesafe-sdk``, the error must be actionable."""
+        with patch.dict(os.environ, {"SYSTEM_ONE_API_KEY": _DUMMY_API_KEY}, clear=True):
+            try:
+                client = build_system_one_client()
+            except SystemOneError as exc:
+                assert "typesafe-sdk" in str(exc)
+            else:  # pragma: no cover - only runs when the SDK is installed
+                close = getattr(client, "close", None)
+                if callable(close):
+                    close()
+
+    def test_effective_config_reports_task(self) -> None:
+        with patch.dict(os.environ, {"SYSTEM_ONE_API_KEY": "k"}, clear=True):
+            cfg = get_effective_system_one_config(MODALITY_ROUTER)
+        assert cfg["task"] == MODALITY_ROUTER
+        assert cfg["model"] == "jev-latest"
+        assert cfg["enabled"] is True
+        assert cfg["api_key_status"] == "set"
+
+    def test_effective_config_marks_missing_key(self) -> None:
+        with patch.dict(os.environ, {}, clear=True):
+            cfg = get_effective_system_one_config(SYSTEM_ONE)
+        assert cfg["task"] == SYSTEM_ONE
+        assert cfg["api_key_status"] != "set"
+
+    def test_base_url_is_model_agnostic(self) -> None:
+        """The decision layer must not inherit the generative provider's URL."""
+        with patch.dict(os.environ, {}, clear=True):
+            assert "openrouter" not in resolve_system_one_base_url()
 
