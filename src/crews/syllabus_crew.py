@@ -21,6 +21,7 @@ output as grounding context.
 
 from __future__ import annotations
 
+import os
 import re
 import sys
 import time
@@ -29,7 +30,7 @@ from datetime import UTC, datetime
 from enum import Enum
 from pathlib import Path
 
-from crewai import Agent, Crew, Process
+from crewai import Agent, Crew, Process, Task
 
 from src.agents.curriculum_architect import get_architect
 from src.agents.education_director import get_education_director
@@ -47,7 +48,20 @@ from src.exporters.theory_validator import (
     format_validation_report,
     validate_theory_directory,
 )
+from src.llm_factory import (
+    ConfigIssue,
+    audit_agent_configs,
+    format_config_issues,
+    has_fatal_config_issues,
+)
 from src.models import GenerationState, TierState
+from src.preflight import (
+    ProbeResult,
+    fatal_probe_results,
+    format_probe_report,
+    probe_agent_models,
+    probe_enabled,
+)
 from src.tasks.lab_generation import create_lab_generation_task
 from src.tasks.lesson_plan_generation import create_lesson_plan_task
 from src.tasks.presentation_generation import create_presentation_task
@@ -109,6 +123,80 @@ _EMPTY_LLM_RESPONSE_MARKERS: tuple[str, ...] = (
     "Invalid response from LLM call - None or empty",
     "Received None or empty response from LLM call",
 )
+
+# ---------------------------------------------------------------------------
+# LLM error taxonomy — decides whether a failure is worth retrying or whether
+# the run must be aborted immediately.
+# ---------------------------------------------------------------------------
+# "retryable"     — transient infrastructure problem (rate limit, timeout,
+#                   connection reset).  A bounded retry with backoff is cheap
+#                   and frequently succeeds.
+# "futile"        — the model returned NULL/empty content.  This almost always
+#                   means a *configuration* or *model* problem (e.g. a
+#                   reasoning model whose token budget was fully consumed by
+#                   internal reasoning), so repeating the call burns credits
+#                   for no benefit.  Abort on the first indication by default.
+# "deterministic" — anything else (e.g. a bad tool name).  Retrying would fail
+#                   identically, so it is re-raised immediately.
+_LLM_ERROR_FUTILE: str = "futile"
+_LLM_ERROR_RETRYABLE: str = "retryable"
+_LLM_ERROR_DETERMINISTIC: str = "deterministic"
+
+# Number of attempts allowed for a *futile* failure before the run aborts.
+# Default 1 == "abort on the first indication", which is what we want: a
+# reasoning model that answered with NULL content will do so again, and every
+# repeat call is pure credit burn.  Set AGENT_LLM_FUTILE_RETRIES=2 (or higher)
+# only when the provider is known to emit occasional one-off empty responses.
+_FUTILE_RETRY_ATTEMPTS_ENV: str = "AGENT_LLM_FUTILE_RETRIES"
+_DEFAULT_FUTILE_RETRY_ATTEMPTS: int = 1
+
+# Agent roles whose configuration is audited before the run starts.  Only the
+# agents that actually appear in the pipeline are included so the pre-flight
+# report stays focused and actionable.
+_PREFLIGHT_ROLES: tuple[str, ...] = (
+    "CURRICULUM_ARCHITECT",
+    "EDUCATION_DIRECTOR",
+    "THEORY_INSTRUCTOR",
+    "INSTRUCTIONAL_COORDINATOR",
+    "PRESENTATION_DESIGNER",
+    "LAB_DEVELOPER",
+    "QA_REVIEWER",
+)
+
+
+def _resolve_futile_attempts() -> int:
+    """Return the configured number of attempts for futile LLM failures."""
+    raw = os.getenv(_FUTILE_RETRY_ATTEMPTS_ENV)
+    if raw is None:
+        return _DEFAULT_FUTILE_RETRY_ATTEMPTS
+    try:
+        return max(1, int(raw))
+    except (TypeError, ValueError):
+        return _DEFAULT_FUTILE_RETRY_ATTEMPTS
+
+
+class FatalLLMError(RuntimeError):
+    """Raised when an LLM failure is diagnosed as *futile*.
+
+    A futile failure is one that reproduces on every retry — typically a model
+    returning ``None``/empty content because its token budget was spent on
+    internal reasoning, or because the configured model is unavailable.
+    Continuing to hammer the API wastes credits, so this exception unwinds to
+    the run-level circuit breaker (:class:`_FatalAbortGuard`), which skips all
+    remaining generation stages instead of starting work that is guaranteed to
+    fail the same way.
+    """
+
+    def __init__(
+        self,
+        message: str,
+        *,
+        agent_role: str | None = None,
+        stage: str | None = None,
+    ) -> None:
+        super().__init__(message)
+        self.agent_role = agent_role
+        self.stage = stage
 
 # Patterns used by :func:`_scan_for_stray_generated_files` to detect
 # agent-generated artefacts written straight into the ``output/`` root
@@ -216,21 +304,28 @@ def _annotate_iter_exhaustion(
     return "\n".join(parts)
 
 
-def _is_transient_llm_error(exc: BaseException) -> bool:
-    """Return True when *exc* signals a transient LLM failure worth retrying.
+def _classify_llm_error(exc: BaseException) -> str:
+    """Classify *exc* into one of three buckets.
 
-    Covers CrewAI's "empty/None response" ``ValueError`` as well as litellm and
-    provider-level errors (rate limiting, timeouts, connection resets).  These
-    are the failures most likely to resolve on a simple retry, in contrast to
-    deterministic errors (e.g. a bad tool name) that would fail again
-    immediately.
+    Returns
+    -------
+    str
+        ``"futile"`` when the model returned NULL/empty content (a repeat call
+        will almost certainly fail identically — abort, don't burn credits);
+        ``"retryable"`` for transient infrastructure failures (rate limiting,
+        timeouts, connection resets); ``"deterministic"`` for everything else
+        (e.g. a bad tool name), which is re-raised immediately.
     """
     msg = str(exc)
+
+    # An exhausted reasoning budget / unreliable model surfaces as an empty
+    # LLM response.  This is the failure mode that motivated the fail-fast
+    # behaviour: retrying it is pure credit burn.
     if any(marker in msg for marker in _EMPTY_LLM_RESPONSE_MARKERS):
-        return True
+        return _LLM_ERROR_FUTILE
 
     if getattr(exc.__class__, "__module__", "").startswith("litellm"):
-        return True
+        return _LLM_ERROR_RETRYABLE
 
     lowered = msg.lower()
     for fragment in (
@@ -242,9 +337,29 @@ def _is_transient_llm_error(exc: BaseException) -> bool:
         "connection",
     ):
         if fragment in lowered:
-            return True
+            return _LLM_ERROR_RETRYABLE
 
-    return False
+    return _LLM_ERROR_DETERMINISTIC
+
+
+def _is_futile_llm_error(exc: BaseException) -> bool:
+    """Return True when *exc* is a futile (non-recoverable) LLM failure.
+
+    Futile failures are not worth retrying: the model has already proven it
+    cannot produce usable output for this request.
+    """
+    return _classify_llm_error(exc) == _LLM_ERROR_FUTILE
+
+
+def _is_transient_llm_error(exc: BaseException) -> bool:
+    """Return True when *exc* signals an LLM failure that *may* resolve on retry.
+
+    Kept as the union of the ``retryable`` and ``futile`` buckets for backward
+    compatibility with callers that only ask "is this an LLM hiccup?".  New
+    code should prefer :func:`_classify_llm_error` so that futile failures can
+    be aborted instead of retried.
+    """
+    return _classify_llm_error(exc) in (_LLM_ERROR_RETRYABLE, _LLM_ERROR_FUTILE)
 
 
 def _annotate_empty_llm_response(raw_error: str, agent_role_env_key: str) -> str:
@@ -284,8 +399,10 @@ def _kickoff_with_retry(
     attempts: int = 3,
     backoff_seconds: float = 2.0,
     verbose: bool = False,
+    agent_role: str = "AGENT",
+    futile_attempts: int | None = None,
 ) -> object:
-    """Run a crew with bounded retries for transient LLM failures.
+    """Run a crew with bounded retries, aborting fast on *futile* failures.
 
     CrewAI's per-agent ``max_retry_limit`` only re-runs a task *within* a
     single crew.  A whole-crew failure (e.g. the QA Reviewer hitting an empty
@@ -294,17 +411,33 @@ def _kickoff_with_retry(
     exponential backoff between attempts, so a single transient provider error
     no longer kills the pipeline.
 
+    Crucially, it distinguishes two very different failure classes
+    (see :func:`_classify_llm_error`):
+
+    * **retryable** (rate limit, timeout, connection reset) — retried up to
+      *attempts* times, because the next attempt genuinely may succeed.
+    * **futile** (``None``/empty model response) — retried at most
+      *futile_attempts* times (default 1, i.e. abort immediately).  A model
+      that answered with NULL content does so again, so repeating the call is
+      pure credit burn.  On exhaustion a :class:`FatalLLMError` is raised,
+      which unwinds to the run-level circuit breaker.
+
     Parameters
     ----------
     build_crew : Callable[[], Crew]
         A zero-arg factory that constructs a fresh ``Crew``.  Rebuilding on
         each attempt avoids reusing per-execution state from a failed run.
     attempts : int
-        Maximum number of kickoff attempts (default 3).
+        Maximum number of kickoff attempts for *retryable* failures (default 3).
     backoff_seconds : float
         Initial backoff delay, doubled on each retry.
     verbose : bool
         When True, log each retry to stderr.
+    agent_role : str
+        Agent role used to build the actionable ``.env`` hint on a futile abort.
+    futile_attempts : int or None
+        Maximum attempts for *futile* failures.  Defaults to
+        ``AGENT_LLM_FUTILE_RETRIES`` (1 = abort on the first indication).
 
     Returns
     -------
@@ -314,17 +447,56 @@ def _kickoff_with_retry(
 
     Raises
     ------
-    The last exception if all attempts are exhausted, or immediately if the
-    error is not classified as transient.
+    FatalLLMError
+        When a futile (empty-response) failure exhausts *futile_attempts*.
+    Exception
+        The last exception when retryable attempts are exhausted, or
+        immediately for deterministic errors.
     """
+    futile_budget = (
+        futile_attempts
+        if futile_attempts is not None
+        else _resolve_futile_attempts()
+    )
     last_exc: BaseException | None = None
+    futile_seen = 0
+
     for attempt in range(1, attempts + 1):
         try:
             crew = build_crew()
             return crew.kickoff()
         except Exception as exc:  # noqa: BLE001 — re-raised after attempts
             last_exc = exc
-            if attempt >= attempts or not _is_transient_llm_error(exc):
+            bucket = _classify_llm_error(exc)
+
+            # Deterministic failures (bad tool name, schema mismatch, …) would
+            # reproduce identically — never retry, never classify as futile.
+            if bucket == _LLM_ERROR_DETERMINISTIC:
+                raise
+
+            if bucket == _LLM_ERROR_FUTILE:
+                futile_seen += 1
+                # Fail fast: an empty response means the model could not
+                # produce usable output for this request.  Retrying it burns
+                # credits without changing the outcome.
+                if futile_seen >= futile_budget:
+                    raise FatalLLMError(
+                        _annotate_empty_llm_response(str(exc), agent_role),
+                        agent_role=agent_role,
+                    ) from exc
+                delay = backoff_seconds * (2 ** (futile_seen - 1))
+                if verbose:
+                    print(
+                        f"  ⚠️  Empty LLM response on attempt "
+                        f"{futile_seen}/{futile_budget} ({type(exc).__name__}); "
+                        f"retrying in {delay:.0f}s…",
+                        file=sys.stderr,
+                    )
+                time.sleep(delay)
+                continue
+
+            # Retryable infrastructure failure (rate limit / timeout / reset).
+            if attempt >= attempts:
                 raise
             delay = backoff_seconds * (2 ** (attempt - 1))
             if verbose:
@@ -335,10 +507,253 @@ def _kickoff_with_retry(
                 )
             time.sleep(delay)
 
-    # Unreachable in practice (the loop either returns or raises); this
-    # satisfies type checkers and guards against future refactors.
+    # Reached only when the loop budget is exhausted without returning.
     assert last_exc is not None
+    if _is_futile_llm_error(last_exc):
+        raise FatalLLMError(
+            _annotate_empty_llm_response(str(last_exc), agent_role),
+            agent_role=agent_role,
+        ) from last_exc
     raise last_exc
+
+
+# ---------------------------------------------------------------------------
+# Run-level circuit breaker — stops the pipeline on the first futile failure
+# ---------------------------------------------------------------------------
+
+
+def _print_abort_banner(*, stage: str, agent_role: str, detail: str) -> None:
+    """Print a loud, unmissable banner explaining why the run was aborted."""
+    print(
+        "\n"
+        + "=" * 74
+        + "\n"
+        + "  ⛔  RUN ABORTED — FUTILE LLM FAILURE (NO FURTHER CREDITS SPENT)\n"
+        + "=" * 74
+        + "\n"
+        + f"  Stage      : {stage}\n"
+        + f"  Agent      : {agent_role}\n"
+        + "  Diagnosis  : the model returned None/empty content.  Repeating\n"
+        + "               this call cannot succeed, so every remaining stage\n"
+        + "               (theory tiers, lesson plans, presentations, labs,\n"
+        + "               QA) is skipped instead of burning credits.\n"
+        + "\n"
+        + detail
+        + "\n"
+        + "=" * 74
+        + "\n",
+        file=sys.stderr,
+    )
+
+
+class _FatalAbortGuard:
+    """Run-scoped circuit breaker for futile LLM failures.
+
+    Once :meth:`trip` is called, every remaining generation stage is skipped.
+    This is the credit-saving mechanism: a broken model configuration, an
+    exhausted reasoning budget, or an unavailable model would otherwise cause
+    each subsequent agent to spend a full — and equally futile — API call.
+    """
+
+    def __init__(self, *, verbose: bool = False) -> None:
+        self.verbose = verbose
+        self._stage: str | None = None
+        self._agent_role: str | None = None
+        self._detail: str | None = None
+
+    @property
+    def tripped(self) -> bool:
+        """True once a futile failure has been recorded."""
+        return self._stage is not None
+
+    @property
+    def stage(self) -> str | None:
+        """Human-readable label of the stage that tripped the breaker."""
+        return self._stage
+
+    @property
+    def agent_role(self) -> str | None:
+        """Agent role that produced the futile failure."""
+        return self._agent_role
+
+    @property
+    def detail(self) -> str | None:
+        """Annotated error text (includes the actionable ``.env`` hints)."""
+        return self._detail
+
+    @property
+    def reason(self) -> str | None:
+        """One-line summary suitable for ``CrewResult.abort_reason``."""
+        if not self.tripped:
+            return None
+        return (
+            f"Aborted during {self._stage} ({self._agent_role}): the model "
+            "returned None/empty content. Remaining stages were skipped to "
+            "avoid burning credits — see stderr for the actionable fix."
+        )
+
+    def trip(
+        self,
+        *,
+        stage: str,
+        agent_role: str,
+        exc: BaseException,
+    ) -> str:
+        """Record a futile failure (idempotent) and return :attr:`reason`."""
+        if not self.tripped:
+            self._stage = stage
+            self._agent_role = agent_role
+            self._detail = _annotate_empty_llm_response(str(exc), agent_role)
+            _print_abort_banner(
+                stage=stage, agent_role=agent_role, detail=self._detail
+            )
+        return self.reason or ""
+
+    def should_skip(self, stage_label: str) -> bool:
+        """Return True (and log) when *stage_label* must be skipped."""
+        if not self.tripped:
+            return False
+        if self.verbose:
+            print(
+                f"  ⏭️  {stage_label}: skipped — run aborted during "
+                f"{self._stage} to avoid burning credits."
+            )
+        return True
+
+
+# ---------------------------------------------------------------------------
+# Pre-flight configuration gate — early warning before any credits are spent
+# ---------------------------------------------------------------------------
+
+_SKIP_PREFLIGHT_ENV: str = "SYLLABUS_SKIP_PREFLIGHT"
+
+
+def _preflight_enabled() -> bool:
+    """Return True unless the operator explicitly disabled the pre-flight audit."""
+    raw = os.getenv(_SKIP_PREFLIGHT_ENV, "").strip().lower()
+    return raw not in ("1", "true", "yes", "on")
+
+
+def _run_preflight_audit(
+    *,
+    verbose: bool = False,
+    strict: bool = True,
+) -> list[ConfigIssue]:
+    """Statically audit every pipeline agent's LLM configuration.
+
+    Costs nothing (no API calls) and runs *before* any agent is invoked, so a
+    configuration that is known to produce ``"Invalid response from LLM call -
+    None or empty"`` is caught while the credit balance is still untouched.
+
+    Parameters
+    ----------
+    verbose : bool
+        When True, print every finding (fatal and warning) to stderr.
+    strict : bool
+        When True, a fatal finding blocks the run entirely.
+
+    Returns
+    -------
+    list[ConfigIssue]
+        Every finding produced by the audit (possibly empty).
+    """
+    issues: list[ConfigIssue] = audit_agent_configs(_PREFLIGHT_ROLES)
+    fatal = has_fatal_config_issues(issues)
+
+    if issues and verbose:
+        print("\n  🔎  Pre-flight configuration audit", file=sys.stderr)
+        print(format_config_issues(issues), file=sys.stderr)
+
+    if fatal and strict:
+        print(
+            "\n"
+            + "=" * 74
+            + "\n"
+            + "  ⛔  PRE-FLIGHT CHECK FAILED — RUN NOT STARTED (0 credits spent)\n"
+            + "=" * 74
+            + "\n"
+            + format_config_issues(issues)
+            + "\n\n"
+            + "  Fix the .env entries above, then re-run.\n"
+            + f"  To bypass this gate: export {_SKIP_PREFLIGHT_ENV}=1\n"
+            + "=" * 74
+            + "\n",
+            file=sys.stderr,
+        )
+
+    return issues
+
+
+def _run_live_model_probe(
+    *,
+    verbose: bool = False,
+    strict: bool = True,
+) -> list[ProbeResult]:
+    """Probe every configured model with one cheap tool-calling request.
+
+    This is the live counterpart to :func:`_run_preflight_audit`.  Where the
+    audit catches *misconfiguration*, the probe catches a *broken model*: one
+    that accepts a tool-calling request (CrewAI's ``call_llm_native_tools``
+    listener) and answers with nothing.  Detecting that here costs a single
+    tiny request per model instead of an entire generation cycle.
+
+    Only an ``empty`` outcome is fatal; transport/HTTP problems are surfaced as
+    warnings, never as a hard stop, so a flaky probe cannot block a run that
+    would otherwise succeed.
+
+    Parameters
+    ----------
+    verbose : bool
+        When True, print the full probe report to stderr.
+    strict : bool
+        When True, an empty-response probe blocks the run.
+
+    Returns
+    -------
+    list[ProbeResult]
+        One result per distinct model (models are deduplicated).
+    """
+    results = probe_agent_models(_PREFLIGHT_ROLES)
+    fatal = fatal_probe_results(results)
+
+    if verbose and results:
+        print("\n  🔎  Pre-flight model probe (tool-calling path)", file=sys.stderr)
+        print(format_probe_report(results), file=sys.stderr)
+
+        for result in results:
+            if result.is_unreachable:
+                print(
+                    f"  ⚠️  Probe could not reach '{result.model}': {result.detail}",
+                    file=sys.stderr,
+                )
+
+    if fatal and strict:
+        details = "\n".join(
+            f"  ⛔  {result.model}  ({result.detail})" for result in fatal
+        )
+        print(
+            "\n"
+            + "=" * 74
+            + "\n"
+            + "  ⛔  PRE-FLIGHT MODEL PROBE FAILED — RUN NOT STARTED (0 credits)\n"
+            + "=" * 74
+            + "\n"
+            + "  The following models returned neither content nor a tool call for\n"
+            + "  a trivial tool-calling request.  This is the exact condition that\n"
+            + "  CrewAI reports as 'Invalid response from LLM call - None or\n"
+            + "  empty.', so running the pipeline would burn credits for nothing:\n"
+            + "\n"
+            + details
+            + "\n\n"
+            + "  👉  Switch the affected agent(s) to a different model in .env, e.g.\n"
+            + "      AGENT_THEORY_INSTRUCTOR_MODEL=<a more reliable model>\n"
+            + f"  To bypass this gate: export {_SKIP_PREFLIGHT_ENV}=1\n"
+            + "=" * 74
+            + "\n",
+            file=sys.stderr,
+        )
+
+    return results
 
 
 def _scan_for_stray_generated_files(
@@ -482,6 +897,8 @@ class CrewResult:
         lesson_plan_error: str | None = None,
         presentation_ok: bool = True,
         presentation_error: str | None = None,
+        aborted: bool = False,
+        abort_reason: str | None = None,
     ) -> None:
         self.syllabus_path = syllabus_path
         self.labs_base_path = labs_base_path
@@ -504,11 +921,14 @@ class CrewResult:
         self.lesson_plan_error = lesson_plan_error
         self.presentation_ok = presentation_ok
         self.presentation_error = presentation_error
+        self.aborted = aborted
+        self.abort_reason = abort_reason
 
     @property
     def all_succeeded(self) -> bool:
         return (
-            self.syllabus_ok
+            not self.aborted
+            and self.syllabus_ok
             and self.syllabus_review_ok
             and self.theory_ok
             and self.labs_ok
@@ -845,6 +1265,49 @@ def run_syllabus_crew(
     CrewResult
         Container with paths, status flags, and any error messages.
     """
+    # ── Pre-flight: audit every agent's LLM config before spending anything ─
+    # A reasoning model with an undersized max_tokens budget (or a missing
+    # model) reliably produces "Invalid response from LLM call - None or
+    # empty".  Catching that here costs nothing and saves a full pipeline run.
+    if _preflight_enabled():
+        preflight_issues = _run_preflight_audit(verbose=verbose, strict=True)
+        if has_fatal_config_issues(preflight_issues):
+            raise FatalLLMError(
+                "Pre-flight configuration audit failed: "
+                + "; ".join(
+                    issue.message
+                    for issue in preflight_issues
+                    if issue.severity == "fatal"
+                ),
+                stage="pre-flight",
+            )
+
+    # ── Pre-flight: live probe of the tool-calling path ────────────────────
+    # Catches a *broken model* — one that answers a tool-calling request with
+    # nothing — before a single generation credit is spent.
+    if probe_enabled():
+        fatal_probes = fatal_probe_results(
+            _run_live_model_probe(verbose=verbose, strict=True)
+        )
+        if fatal_probes:
+            raise FatalLLMError(
+                "Pre-flight model probe failed: "
+                + "; ".join(
+                    f"{result.model} ({result.role}) returned an empty response"
+                    for result in fatal_probes
+                ),
+                stage="pre-flight probe",
+            )
+
+    # Run-scoped circuit breaker: once tripped, every remaining generation
+    # stage is skipped, so a broken model cannot burn credits on work that is
+    # guaranteed to fail exactly the same way.
+    abort_guard = _FatalAbortGuard(verbose=verbose)
+
+    def _trip_guard(stage: str, agent_role: str, exc: BaseException) -> None:
+        """Record a futile failure so all remaining stages are skipped."""
+        abort_guard.trip(stage=stage, agent_role=agent_role, exc=exc)
+
     # Extract course_name from context if not explicitly provided.
     if not course_name:
         # Use the first line or first 80 chars as a fallback name.
@@ -966,9 +1429,17 @@ def run_syllabus_crew(
             syllabus_ok = True
 
         except Exception as exc:
-            syllabus_error = _annotate_iter_exhaustion(
-                str(exc), "CURRICULUM_ARCHITECT", parent_error=exc
-            )
+            if _is_futile_llm_error(exc) or isinstance(exc, FatalLLMError):
+                _trip_guard(
+                    "Curriculum Architect (syllabus)",
+                    "CURRICULUM_ARCHITECT",
+                    exc,
+                )
+                syllabus_error = abort_guard.reason
+            else:
+                syllabus_error = _annotate_iter_exhaustion(
+                    str(exc), "CURRICULUM_ARCHITECT", parent_error=exc
+                )
             write_file(
                 syllabus_path,
                 f"# {course_name} — Syllabus Generation Failed\n\n**Error:** {syllabus_error}\n",
@@ -982,6 +1453,8 @@ def run_syllabus_crew(
 
     if skip_syllabus_review:
         syllabus_review_ok = True
+    elif abort_guard.should_skip("Syllabus Feasibility Audit"):
+        syllabus_review_error = abort_guard.reason
     elif syllabus_raw:
         try:
             education_director = get_education_director(verbose=verbose)
@@ -1016,9 +1489,15 @@ def run_syllabus_crew(
                 syllabus_review_error = "Education Director produced no output."
 
         except Exception as exc:
-            syllabus_review_error = _annotate_iter_exhaustion(
-                str(exc), "EDUCATION_DIRECTOR", parent_error=exc
-            )
+            if _is_futile_llm_error(exc):
+                _trip_guard(
+                    "Syllabus Feasibility Audit", "EDUCATION_DIRECTOR", exc
+                )
+                syllabus_review_error = abort_guard.reason
+            else:
+                syllabus_review_error = _annotate_iter_exhaustion(
+                    str(exc), "EDUCATION_DIRECTOR", parent_error=exc
+                )
             if verbose:
                 print(f"  ❌  Syllabus Feasibility Audit failed: {exc}", file=sys.stderr)
     else:
@@ -1032,6 +1511,8 @@ def run_syllabus_crew(
 
     if skip_theory:
         theory_ok = True
+    elif abort_guard.should_skip("Theory artifacts"):
+        theory_error = abort_guard.reason
     elif syllabus_raw:
         # ── Load generation state for resume detection ────────────────
         state = None if human_feedback else load_generation_state(run_dir)
@@ -1071,13 +1552,32 @@ def run_syllabus_crew(
                     verbose=verbose,
                 )
 
-                tier_theory_crew = Crew(
-                    agents=[theory_instructor],
-                    tasks=[tier_theory_task],
-                    process=Process.sequential,
+                def _build_tier_theory_crew(
+                    _agent: Agent = theory_instructor,
+                    _task: Task = tier_theory_task,
+                ) -> Crew:
+                    """Rebuild the per-tier theory crew for each retry attempt.
+
+                    Default-argument binding is deliberate: it snapshots the
+                    loop-scoped agent/task so the rebuilder never picks up a
+                    later iteration's values.
+                    """
+                    return Crew(
+                        agents=[_agent],
+                        tasks=[_task],
+                        process=Process.sequential,
+                        verbose=verbose,
+                    )
+
+                # Fail fast on empty LLM responses (futile) while still
+                # absorbing genuine provider blips (rate limits, timeouts).
+                _kickoff_with_retry(
+                    _build_tier_theory_crew,
+                    attempts=3,
+                    backoff_seconds=2.0,
                     verbose=verbose,
+                    agent_role="THEORY_INSTRUCTOR",
                 )
-                tier_theory_crew.kickoff()
 
                 # ── Validate the generated theory file ────────────────
                 theory_dir = tier_labs_path / "theory"
@@ -1117,7 +1617,30 @@ def run_syllabus_crew(
                 if state:
                     state.theory[tier_dir_name] = "failed"
                     save_generation_state(run_dir, state)
-                exc_msg = _annotate_iter_exhaustion(str(exc), "THEORY_INSTRUCTOR", parent_error=exc)
+
+                if _is_futile_llm_error(exc) or isinstance(exc, FatalLLMError):
+                    # Stop immediately: every remaining tier would fail exactly
+                    # the same way and burn credits for nothing.
+                    _trip_guard(
+                        f"Theory artifacts ({tier_dir_name})",
+                        "THEORY_INSTRUCTOR",
+                        exc,
+                    )
+                    if verbose:
+                        print(
+                            f"  ⛔  Theory for {tier_dir_name} aborted — "
+                            "remaining tiers skipped.",
+                            file=sys.stderr,
+                        )
+                    break
+
+                # Deterministic/other failure: annotate with both hints so the
+                # operator sees the actionable .env fix either way.
+                exc_msg = _annotate_iter_exhaustion(
+                    _annotate_empty_llm_response(str(exc), "THEORY_INSTRUCTOR"),
+                    "THEORY_INSTRUCTOR",
+                    parent_error=exc,
+                )
                 if verbose:
                     print(
                         f"  ❌  Theory for {tier_dir_name} failed: {exc_msg}",
@@ -1126,7 +1649,11 @@ def run_syllabus_crew(
 
         theory_ok = all_theory_tiers_ok
         if not theory_ok:
-            theory_error = "One or more theory tiers failed. See logs above for details."
+            theory_error = (
+                abort_guard.reason
+                if abort_guard.tripped
+                else "One or more theory tiers failed. See logs above for details."
+            )
 
     else:
         theory_error = "Skipped — Curriculum Architect produced no syllabus to use as context."
@@ -1137,6 +1664,8 @@ def run_syllabus_crew(
 
     if skip_lesson_plans:
         lesson_plan_ok = True
+    elif abort_guard.should_skip("Lesson plans"):
+        lesson_plan_error = abort_guard.reason
     elif syllabus_raw:
         lp_state = None if human_feedback else load_generation_state(run_dir)
         all_lp_tiers_ok = True
@@ -1184,12 +1713,29 @@ def run_syllabus_crew(
                 if lp_state:
                     lp_state.lesson_plan[tier_dir_name] = "failed"
                     save_generation_state(run_dir, lp_state)
+                if _is_futile_llm_error(exc):
+                    _trip_guard(
+                        f"Lesson plan ({tier_dir_name})",
+                        "INSTRUCTIONAL_COORDINATOR",
+                        exc,
+                    )
+                    if verbose:
+                        print(
+                            f"  ⛔  Lesson Plan for {tier_dir_name} aborted — "
+                            "remaining tiers skipped.",
+                            file=sys.stderr,
+                        )
+                    break
                 if verbose:
                     print(f"  ❌  Lesson Plan for {tier_dir_name} failed: {exc}", file=sys.stderr)
 
         lesson_plan_ok = all_lp_tiers_ok
         if not lesson_plan_ok:
-            lesson_plan_error = "One or more lesson plan tiers failed."
+            lesson_plan_error = (
+                abort_guard.reason
+                if abort_guard.tripped
+                else "One or more lesson plan tiers failed."
+            )
 
     # ── 2.6. Presentation Generation — Presentation Designer ────────────
     presentation_ok = False
@@ -1197,6 +1743,8 @@ def run_syllabus_crew(
 
     if skip_presentations:
         presentation_ok = True
+    elif abort_guard.should_skip("Presentations"):
+        presentation_error = abort_guard.reason
     elif syllabus_raw:
         pres_state = None if human_feedback else load_generation_state(run_dir)
         all_pres_tiers_ok = True
@@ -1244,20 +1792,44 @@ def run_syllabus_crew(
                 if pres_state:
                     pres_state.presentation[tier_dir_name] = "failed"
                     save_generation_state(run_dir, pres_state)
+                if _is_futile_llm_error(exc):
+                    _trip_guard(
+                        f"Presentation ({tier_dir_name})",
+                        "PRESENTATION_DESIGNER",
+                        exc,
+                    )
+                    if verbose:
+                        print(
+                            f"  ⛔  Presentation for {tier_dir_name} aborted — "
+                            "remaining tiers skipped.",
+                            file=sys.stderr,
+                        )
+                    break
                 if verbose:
                     print(f"  ❌  Presentation for {tier_dir_name} failed: {exc}", file=sys.stderr)
 
         presentation_ok = all_pres_tiers_ok
         if not presentation_ok:
-            presentation_error = "One or more presentation tiers failed."
+            presentation_error = (
+                abort_guard.reason
+                if abort_guard.tripped
+                else "One or more presentation tiers failed."
+            )
 
     # ── 3. Lab & Project Developer ─────────────────────────────────────
     labs_ok = False
     labs_error: str | None = None
+    # Initialised here (not only inside the generate branch) so the later
+    # delegation pool check `lab_dev is not None` cannot raise NameError when
+    # labs are skipped via skip_labs=True.
+    lab_dev: Agent | None = None
 
     if skip_labs:
         _create_lab_scaffolding(labs_base_path)
         labs_ok = True
+    elif abort_guard.should_skip("Labs"):
+        _create_lab_scaffolding(labs_base_path)
+        labs_error = abort_guard.reason
     else:
         _create_lab_scaffolding(labs_base_path)
         lab_dev = None
@@ -1276,26 +1848,47 @@ def run_syllabus_crew(
             # tier and writes its files via the output_export_tool.
 
             def _generate_tier(tier_name: str) -> bool:
-                tier_task = create_lab_generation_task(
-                    agent=lab_dev,
-                    course_name=course_name,
-                    syllabus_context=syllabus_raw,
-                    language=primary_language,
-                    run_id=_active_run_id,
-                    tier=tier_name,
-                    material_language=material_language,
-                    human_feedback=human_feedback,
-                    verbose=verbose,
-                )
-
                 try:
-                    tier_crew = Crew(
-                        agents=[lab_dev],
-                        tasks=[tier_task],
+                    tier_task = create_lab_generation_task(
+                        agent=lab_dev,
+                        course_name=course_name,
+                        syllabus_context=syllabus_raw,
+                        language=primary_language,
+                        run_id=_active_run_id,
+                        tier=tier_name,
+                        material_language=material_language,
+                        human_feedback=human_feedback,
+                        verbose=verbose,
+                    )
+                except Exception as exc:
+                    # Task construction used to sit outside the try block, so a
+                    # config/schema problem here escaped run_syllabus_crew
+                    # entirely and crashed the whole pipeline.
+                    print(f"  ❌  {tier_name}: could not build the lab task: {exc}")
+                    return False
+
+                def _build_tier_lab_crew(
+                    _agent: Agent = lab_dev,
+                    _task: Task = tier_task,
+                ) -> Crew:
+                    """Rebuild the per-tier lab crew for each retry attempt."""
+                    return Crew(
+                        agents=[_agent],
+                        tasks=[_task],
                         process=Process.sequential,
                         verbose=verbose,
                     )
-                    tier_result = tier_crew.kickoff()
+
+                try:
+                    # Fail fast on empty LLM responses (futile) while still
+                    # absorbing genuine provider blips (rate limits, timeouts).
+                    tier_result = _kickoff_with_retry(
+                        _build_tier_lab_crew,
+                        attempts=3,
+                        backoff_seconds=2.0,
+                        verbose=verbose,
+                        agent_role="LAB_DEVELOPER",
+                    )
                     tier_raw = (
                         tier_result.raw if hasattr(tier_result, "raw") else str(tier_result)
                     ).strip()
@@ -1327,7 +1920,15 @@ def run_syllabus_crew(
                     return True
 
                 except Exception as exc:
-                    print(f"  ❌  {tier_name}: {exc}")
+                    if _is_futile_llm_error(exc) or isinstance(exc, FatalLLMError):
+                        _trip_guard(
+                            f"Labs ({tier_name})", "LAB_DEVELOPER", exc
+                        )
+                        print(
+                            f"  ⛔  {tier_name}: aborted — remaining tiers skipped."
+                        )
+                    else:
+                        print(f"  ❌  {tier_name}: {exc}")
                     return False
 
             tiers = [
@@ -1374,6 +1975,10 @@ def run_syllabus_crew(
                             status="failed",
                         )
                         save_generation_state(run_dir, lab_state)
+                    # A futile failure means the model cannot serve this run:
+                    # stop spending credits on the remaining tiers.
+                    if abort_guard.tripped:
+                        break
                 elif lab_state:
                     lab_state.tiers[tier_name] = TierState(
                         status="complete",
@@ -1389,7 +1994,11 @@ def run_syllabus_crew(
                 write_file(labs_base_path / "README.md", top_readme, force=True)
                 labs_ok = True
             else:
-                labs_error = "One or more tier lab tasks failed.  Check the per-tier output above."
+                labs_error = (
+                    abort_guard.reason
+                    if abort_guard.tripped
+                    else "One or more tier lab tasks failed.  Check the per-tier output above."
+                )
         elif not syllabus_raw:
             labs_error = "Skipped — Curriculum Architect produced no syllabus to use as context."
 
@@ -1409,6 +2018,8 @@ def run_syllabus_crew(
     # Skip only if explicitly disabled or nothing was produced.
     if skip_qa or (not labs_ok and not theory_ok):
         qa_ok = True  # Nothing to review, or explicitly skipped.
+    elif abort_guard.should_skip("QA review"):
+        qa_error = abort_guard.reason
     elif lab_dev is not None or theory_instructor is not None:
         # The QA Reviewer is a singleton (get_qa_reviewer) and the Lab
         # Developer / Theory Instructor objects are reused across the run, so
@@ -1452,6 +2063,7 @@ def run_syllabus_crew(
                 attempts=3,
                 backoff_seconds=2.0,
                 verbose=verbose,
+                agent_role="QA_REVIEWER",
             )
             qa_report = (qa_result.raw if hasattr(qa_result, "raw") else str(qa_result)).strip()
 
@@ -1483,11 +2095,15 @@ def run_syllabus_crew(
                 )
 
         except Exception as exc:
-            qa_error = _annotate_iter_exhaustion(
-                _annotate_empty_llm_response(str(exc), "QA_REVIEWER"),
-                "QA_REVIEWER",
-                parent_error=exc,
-            )
+            if _is_futile_llm_error(exc) or isinstance(exc, FatalLLMError):
+                _trip_guard("QA review", "QA_REVIEWER", exc)
+                qa_error = abort_guard.reason
+            else:
+                qa_error = _annotate_iter_exhaustion(
+                    _annotate_empty_llm_response(str(exc), "QA_REVIEWER"),
+                    "QA_REVIEWER",
+                    parent_error=exc,
+                )
             if verbose:
                 print(f"  ❌  QA Review failed: {exc}", file=sys.stderr)
 
@@ -1532,4 +2148,6 @@ def run_syllabus_crew(
         lesson_plan_error=lesson_plan_error,
         presentation_ok=presentation_ok,
         presentation_error=presentation_error,
+        aborted=abort_guard.tripped,
+        abort_reason=abort_guard.reason,
     )

@@ -33,6 +33,8 @@ from __future__ import annotations
 
 import os
 import sys
+from collections.abc import Iterable
+from dataclasses import dataclass
 
 # Fail fast with a clear message instead of a confusing ``ModuleNotFoundError``
 # (or an ``ImportError`` from ``datetime.UTC``) when an older interpreter is
@@ -392,6 +394,170 @@ def get_effective_config(agent_role: str) -> dict[str, object]:
         "base_url": _get_base_url(),
         "api_key_status": api_key_status,
     }
+
+
+# ---------------------------------------------------------------------------
+# Configuration pre-flight audit — early warning before any credits are spent
+# ---------------------------------------------------------------------------
+# The single most common cause of the CrewAI error
+# ``"Invalid response from LLM call - None or empty"`` is a *reasoning* model
+# configured with a ``max_tokens`` budget that is too small: the model spends
+# its entire allowance on internal reasoning and emits no visible content.
+# Retrying that call cannot help and only burns credits, so the audit below
+# detects the misconfiguration **before** the pipeline starts and surfaces it
+# as a fatal, actionable finding.
+
+
+@dataclass(frozen=True)
+class ConfigIssue:
+    """A single pre-flight finding for one agent's LLM configuration.
+
+    Attributes
+    ----------
+    role : str
+        Agent role the finding applies to (e.g. ``THEORY_INSTRUCTOR``).
+    severity : str
+        Either ``"fatal"`` (the run must not start) or ``"warning"``
+        (the run may start, but the configuration is risky).
+    message : str
+        Human-readable description of the detected problem.
+    fix : str
+        Concrete remediation, including the exact ``.env`` key to change.
+    """
+
+    role: str
+    severity: str
+    message: str
+    fix: str
+
+
+def _is_reasoning_model(model: str) -> bool:
+    """Return True when *model* is a known built-in-reasoning model."""
+    lowered = model.lower()
+    return any(pattern in lowered for pattern in _REASONING_MODEL_PATTERNS)
+
+
+def audit_agent_config(agent_role: str) -> list[ConfigIssue]:
+    """Inspect one agent's effective LLM config for known failure modes.
+
+    This is a *static* check — it makes no API calls and costs nothing.  It
+    catches the two configuration problems that reliably produce the
+    ``"Invalid response from LLM call - None or empty"`` failure:
+
+    1. **Reasoning model with a token budget that is too small** (fatal).
+       Reasoning tokens are consumed before any visible output, so a budget
+       below :data:`_MIN_SAFE_MAX_TOKENS_REASONING` yields NULL content.
+    2. **Reasoning model with very restrictive ``top_p``** (warning).
+       Extremely low values can degenerate into empty completions,
+       particularly on tool-calling steps.
+
+    Parameters
+    ----------
+    agent_role : str
+        Uppercase snake_case agent identifier.
+
+    Returns
+    -------
+    list[ConfigIssue]
+        Zero or more findings (empty when the configuration is healthy).
+    """
+    cfg = get_effective_config(agent_role)
+    model = str(cfg["model"])
+    max_tokens = int(cfg["max_tokens"])  # type: ignore[arg-type]
+    top_p = float(cfg["top_p"])  # type: ignore[arg-type]
+
+    issues: list[ConfigIssue] = []
+
+    if not model.strip():
+        issues.append(
+            ConfigIssue(
+                role=agent_role,
+                severity="fatal",
+                message=f"{agent_role}: no model is configured.",
+                fix=f"Set AGENT_{agent_role}_MODEL (or AGENT_DEFAULT_MODEL) in .env.",
+            )
+        )
+        return issues
+
+    is_reasoning = _is_reasoning_model(model)
+
+    if is_reasoning and max_tokens < _MIN_SAFE_MAX_TOKENS_REASONING:
+        issues.append(
+            ConfigIssue(
+                role=agent_role,
+                severity="fatal",
+                message=(
+                    f"{agent_role}: reasoning model '{model}' is configured with "
+                    f"max_tokens={max_tokens}, below the safe minimum of "
+                    f"{_MIN_SAFE_MAX_TOKENS_REASONING}."
+                ),
+                fix=(
+                    f"Set AGENT_{agent_role}_MAX_TOKENS="
+                    f"{_MIN_SAFE_MAX_TOKENS_REASONING} (or higher) in .env. "
+                    "Reasoning tokens are consumed before visible output, so a "
+                    "smaller budget makes the model return NULL content and "
+                    "aborts the run with 'Invalid response from LLM call - "
+                    "None or empty'."
+                ),
+            )
+        )
+
+    if is_reasoning and top_p < 0.5:
+        issues.append(
+            ConfigIssue(
+                role=agent_role,
+                severity="warning",
+                message=(
+                    f"{agent_role}: reasoning model '{model}' uses top_p="
+                    f"{top_p} (very restrictive sampling)."
+                ),
+                fix=(
+                    f"Consider raising AGENT_{agent_role}_TOP_P to ~0.7-0.9. "
+                    "Extremely low top_p can degenerate into empty completions "
+                    "on tool-calling steps."
+                ),
+            )
+        )
+
+    return issues
+
+
+def audit_agent_configs(
+    agent_roles: Iterable[str] | None = None,
+) -> list[ConfigIssue]:
+    """Audit several agents at once.
+
+    Parameters
+    ----------
+    agent_roles : Iterable[str] or None
+        Roles to audit.  Defaults to every known role
+        (:data:`_KNOWN_ROLES`) when None.
+
+    Returns
+    -------
+    list[ConfigIssue]
+        Concatenated findings for every audited role.
+    """
+    roles = tuple(agent_roles) if agent_roles is not None else _KNOWN_ROLES
+    issues: list[ConfigIssue] = []
+    for role in roles:
+        issues.extend(audit_agent_config(role))
+    return issues
+
+
+def has_fatal_config_issues(issues: Iterable[ConfigIssue]) -> bool:
+    """Return True when *issues* contains at least one ``"fatal"`` finding."""
+    return any(issue.severity == "fatal" for issue in issues)
+
+
+def format_config_issues(issues: Iterable[ConfigIssue]) -> str:
+    """Render *issues* as a human-readable, copy-pasteable block."""
+    lines: list[str] = []
+    for issue in issues:
+        icon = "⛔" if issue.severity == "fatal" else "⚠️ "
+        lines.append(f"  {icon}  [{issue.severity.upper()}] {issue.message}")
+        lines.append(f"       → {issue.fix}")
+    return "\n".join(lines)
 
 
 def list_agent_configs() -> None:

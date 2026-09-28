@@ -72,6 +72,7 @@ from src.agents.intake_specialist import get_intake_specialist
 from src.crews.syllabus_crew import (
     OUTPUT_ROOT,
     CrewResult,
+    FatalLLMError,
     generate_run_id,
     run_syllabus_crew,
 )
@@ -814,25 +815,88 @@ def _run_intake(
 # ---------------------------------------------------------------------------
 
 
+def _exit_on_fatal_llm_error(exc: FatalLLMError) -> None:
+    """Report a fail-fast LLM abort and exit with a dedicated code.
+
+    Exit codes
+    ----------
+    2  reserved for API-key / authentication problems (see the RuntimeError
+       handler below).
+    3  reserved for unexpected errors.
+    4  futile LLM failure — the run was aborted deliberately to avoid
+       burning credits on calls that cannot succeed.
+    """
+    print(f"\n❌  Fatal LLM Error: {exc}", file=sys.stderr)
+    print(
+        "\n   The model cannot produce output for the current configuration, so\n"
+        "   the run was stopped before any further API credits were spent.\n"
+        "   Fix the .env entries listed above, then re-run.\n",
+        file=sys.stderr,
+    )
+    sys.exit(4)
+
+
+def _exit_on_aborted_run(result: CrewResult) -> None:
+    """Report an aborted (partial) run and exit without prompting for feedback.
+
+    A futile LLM failure means another HITL iteration would fail identically,
+    so asking the operator for feedback would waste their time.
+    """
+    print(
+        "\n  ⛔  Run aborted early — a futile LLM failure was detected and the\n"
+        "      remaining stages were skipped to avoid burning credits.\n"
+        "      Fix the .env entries listed above, then re-run.\n",
+        file=sys.stderr,
+    )
+    sys.exit(4)
+
+
 def _maybe_print_iter_hint(error_text: str) -> None:
-    """If *error_text* contains an iteration-exhaustion marker, print a
-    compact hint telling the operator which env var to tweak.
+    """If *error_text* contains a known failure marker, print a compact hint.
+
+    Covers two distinct failure modes:
+
+    * **Iteration exhaustion** — ``"Maximum iterations reached"``; the fix is
+      a higher ``AGENT_{ROLE}_MAX_ITER``.
+    * **Empty LLM response** — the model returned NULL/empty content because
+      its reasoning budget was consumed; the fix is a higher
+      ``AGENT_{ROLE}_MAX_TOKENS`` and/or a more reliable model.
 
     The heavy lifting (full annotated message) is done in
-    :func:`src.crews.syllabus_crew._annotate_iter_exhaustion`.  This
+    :func:`src.crews.syllabus_crew._annotate_iter_exhaustion` and
+    :func:`src.crews.syllabus_crew._annotate_empty_llm_response`.  This
     function provides a quick, non-intrusive reminder at the end of the
     results summary.
     """
-    if "Maximum iterations reached" not in error_text:
-        return
-
-    # Extract the env-var name if present (inserted by _annotate_iter_exhaustion).
     import re
 
-    match = re.search(r"AGENT_(\w+)_MAX_ITER", error_text)
-    if match:
-        agent = match.group(1)
-        print(f"      💡  Try: export AGENT_{agent}_MAX_ITER=<higher_value>")
+    # ── Iteration exhaustion ──────────────────────────────────────────────
+    if "Maximum iterations reached" in error_text:
+        match = re.search(r"AGENT_(\w+)_MAX_ITER", error_text)
+        if match:
+            agent = match.group(1)
+            print(f"      💡  Try: export AGENT_{agent}_MAX_ITER=<higher_value>")
+
+    # ── Empty / NULL LLM response (reasoning budget exhausted) ────────────
+    empty_markers = (
+        "EMPTY LLM RESPONSE DETECTED",
+        "Invalid response from LLM call - None or empty",
+        "Received None or empty response from LLM call",
+        "returned None/empty content",
+    )
+    if any(marker in error_text for marker in empty_markers):
+        match = re.search(r"AGENT_(\w+)_MAX_TOKENS", error_text)
+        if match:
+            agent = match.group(1)
+            print(
+                f"      💡  Try: export AGENT_{agent}_MAX_TOKENS=16384 "
+                f"(or switch AGENT_{agent}_MODEL)"
+            )
+        else:
+            print(
+                "      💡  Empty LLM response — raise the agent's max_tokens "
+                "budget (or switch to a more reliable model) in .env."
+            )
 
 
 def _print_summary(result: CrewResult, course_name: str) -> None:
@@ -841,6 +905,13 @@ def _print_summary(result: CrewResult, course_name: str) -> None:
     print("  🐝  Syllabus Swarm — Results Summary")
     print(f"  Course: {course_name}")
     print(f"{'=' * 60}")
+
+    # ── Fail-fast abort notice ──────────────
+    if result.aborted:
+        print()
+        print("  ⛔  RUN ABORTED EARLY — FUTILE LLM FAILURE")
+        if result.abort_reason:
+            print(f"      ↳ {result.abort_reason}")
 
     # ── Syllabus Agent ──────────────────────
     print()
@@ -1147,6 +1218,8 @@ def main(argv: list[str] | None = None) -> None:
                     human_feedback=human_feedback,
                     run_id=run_id,
                 )
+            except FatalLLMError as exc:
+                _exit_on_fatal_llm_error(exc)
             except RuntimeError as exc:
                 print(f"\n❌  Fatal Runtime Error: {exc}", file=sys.stderr)
                 print(
@@ -1157,6 +1230,12 @@ def main(argv: list[str] | None = None) -> None:
             except Exception as exc:
                 print(f"\n❌  Fatal Unexpected Error: {exc}", file=sys.stderr)
                 sys.exit(3)
+
+            # A futile LLM failure aborts the run deliberately: never prompt for
+            # feedback, because another iteration would fail identically.
+            if result.aborted:
+                _print_summary(result, course_name)
+                _exit_on_aborted_run(result)
 
             action, feedback_text = prompt_for_feedback()
             if action == "APPROVE":
@@ -1308,6 +1387,8 @@ def main(argv: list[str] | None = None) -> None:
                 resume_dir=_current_resume_dir,
                 run_id=run_id,
             )
+        except FatalLLMError as exc:
+            _exit_on_fatal_llm_error(exc)
         except RuntimeError as exc:
             print(f"\n❌  Fatal Runtime Error: {exc}", file=sys.stderr)
             print(
@@ -1318,6 +1399,12 @@ def main(argv: list[str] | None = None) -> None:
         except Exception as exc:
             print(f"\n❌  Fatal Unexpected Error: {exc}", file=sys.stderr)
             sys.exit(3)
+
+        # A futile LLM failure aborts the run deliberately: never prompt for
+        # feedback, because another iteration would fail identically.
+        if result.aborted:
+            _print_summary(result, course_name)
+            _exit_on_aborted_run(result)
 
         action, feedback_text = prompt_for_feedback()
         if action == "APPROVE":

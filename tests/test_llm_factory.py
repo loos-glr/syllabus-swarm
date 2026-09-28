@@ -31,8 +31,15 @@ from src.llm_factory import (
     EDUCATION_DIRECTOR,
     LAB_DEVELOPER,
     OUTPUT_EXPORTER,
+    QA_REVIEWER,
+    THEORY_INSTRUCTOR,
+    ConfigIssue,
+    audit_agent_config,
+    audit_agent_configs,
     build_llm_for_agent,
+    format_config_issues,
     get_effective_config,
+    has_fatal_config_issues,
 )
 
 # ---------------------------------------------------------------------------
@@ -345,3 +352,120 @@ class TestInputValidation:
         with patch.dict(os.environ, _env(), clear=True):
             with pytest.raises(ValueError):
                 build_llm_for_agent(None)  # type: ignore[arg-type]
+
+# ---------------------------------------------------------------------------
+# Pre-flight configuration audit — early warning before credits are spent
+# ---------------------------------------------------------------------------
+
+
+class TestAuditAgentConfig:
+    """The audit must flag the exact misconfigurations that cause NULL content."""
+
+    def test_reasoning_model_with_low_max_tokens_is_fatal(self) -> None:
+        env = _env(
+            {
+                "AGENT_THEORY_INSTRUCTOR_MODEL": "openrouter/anthropic/claude-opus-5.5",
+                "AGENT_THEORY_INSTRUCTOR_MAX_TOKENS": "8192",
+                "AGENT_THEORY_INSTRUCTOR_TOP_P": "0.9",
+            }
+        )
+        with patch.dict(os.environ, env, clear=True):
+            issues = audit_agent_config(THEORY_INSTRUCTOR)
+
+        fatal = [i for i in issues if i.severity == "fatal"]
+        assert len(fatal) == 1
+        assert "claude-opus-5.5" in fatal[0].message
+        assert "AGENT_THEORY_INSTRUCTOR_MAX_TOKENS" in fatal[0].fix
+        assert has_fatal_config_issues(issues)
+
+    def test_reasoning_model_with_safe_max_tokens_is_clean(self) -> None:
+        env = _env(
+            {
+                "AGENT_THEORY_INSTRUCTOR_MODEL": "openrouter/anthropic/claude-opus-5.5",
+                "AGENT_THEORY_INSTRUCTOR_MAX_TOKENS": "32768",
+                "AGENT_THEORY_INSTRUCTOR_TOP_P": "0.9",
+            }
+        )
+        with patch.dict(os.environ, env, clear=True):
+            issues = audit_agent_config(THEORY_INSTRUCTOR)
+
+        assert issues == []
+        assert not has_fatal_config_issues(issues)
+
+    def test_reasoning_model_with_low_top_p_is_warning_only(self) -> None:
+        env = _env(
+            {
+                "AGENT_THEORY_INSTRUCTOR_MODEL": "openrouter/anthropic/claude-opus-5.5",
+                "AGENT_THEORY_INSTRUCTOR_MAX_TOKENS": "32768",
+                "AGENT_THEORY_INSTRUCTOR_TOP_P": "0.1",
+            }
+        )
+        with patch.dict(os.environ, env, clear=True):
+            issues = audit_agent_config(THEORY_INSTRUCTOR)
+
+        assert len(issues) == 1
+        assert issues[0].severity == "warning"
+        assert "top_p" in issues[0].message
+        assert not has_fatal_config_issues(issues)
+
+    def test_non_reasoning_model_is_not_flagged_for_low_tokens(self) -> None:
+        env = _env(
+            {
+                "AGENT_LAB_DEVELOPER_MODEL": "openrouter/z-ai/glm-5.3",
+                "AGENT_LAB_DEVELOPER_MAX_TOKENS": "8192",
+                "AGENT_LAB_DEVELOPER_TOP_P": "0.1",
+            }
+        )
+        with patch.dict(os.environ, env, clear=True):
+            issues = audit_agent_config(LAB_DEVELOPER)
+
+        assert issues == []
+
+    def test_blank_model_is_fatal(self) -> None:
+        env = _env({"AGENT_QA_REVIEWER_MODEL": "   "})
+        with patch.dict(os.environ, env, clear=True):
+            issues = audit_agent_config(QA_REVIEWER)
+
+        assert len(issues) == 1
+        assert issues[0].severity == "fatal"
+        assert "no model is configured" in issues[0].message
+
+    def test_audited_agents_are_resolved_independently(self) -> None:
+        """A healthy non-reasoning default keeps every role clean."""
+        with patch.dict(os.environ, _env(), clear=True):
+            issues = audit_agent_configs([CURRICULUM_ARCHITECT, EDUCATION_DIRECTOR])
+        assert issues == []
+
+
+class TestConfigIssueReporting:
+    def test_audit_agent_configs_aggregates_findings(self) -> None:
+        env = _env(
+            {
+                "AGENT_DEFAULT_MODEL": "openrouter/anthropic/claude-opus-5.5",
+                "AGENT_DEFAULT_MAX_TOKENS": "4096",
+                "AGENT_DEFAULT_TOP_P": "0.9",
+            }
+        )
+        with patch.dict(os.environ, env, clear=True):
+            issues = audit_agent_configs([CURRICULUM_ARCHITECT, LAB_DEVELOPER])
+
+        assert {i.role for i in issues} == {CURRICULUM_ARCHITECT, LAB_DEVELOPER}
+        assert has_fatal_config_issues(issues)
+
+    def test_has_fatal_config_issues_false_for_warnings_only(self) -> None:
+        warnings = [
+            ConfigIssue(role="X", severity="warning", message="m", fix="f"),
+        ]
+        assert not has_fatal_config_issues(warnings)
+
+    def test_format_config_issues_includes_severity_and_fix(self) -> None:
+        out = format_config_issues(
+            [ConfigIssue(role="X", severity="fatal", message="boom", fix="set the var")]
+        )
+        assert "FATAL" in out
+        assert "boom" in out
+        assert "set the var" in out
+
+    def test_format_config_issues_empty_input(self) -> None:
+        assert format_config_issues([]) == ""
+

@@ -241,6 +241,46 @@ export AGENT_QA_REVIEWER_MAX_ITER=250
 export AGENT_DEFAULT_MAX_ITER=100
 ```
 
+### "Invalid response from LLM call - None or empty"
+
+The model returned NULL/empty content. With reasoning models this almost always
+means the token budget was consumed by internal reasoning before any visible
+output was produced.
+
+**The swarm treats this as a *futile* failure and aborts the run on the first
+indication** — remaining tiers and stages (lesson plans, presentations, labs,
+QA) are skipped instead of burning credits on calls that cannot succeed. You
+will see a `⛔ RUN ABORTED` banner and the process exits with code `4`.
+
+Fix it by raising the agent's token budget (and/or switching model):
+
+```bash
+export AGENT_THEORY_INSTRUCTOR_MAX_TOKENS=32768   # must be >= 16384 for reasoning models
+export AGENT_THEORY_INSTRUCTOR_MODEL=openrouter/deepseek/deepseek-v4-pro
+```
+
+Two guards run **before** any credits are spent:
+
+| Guard | Cost | Catches |
+|---|---|---|
+| Static config audit | none | reasoning model with `max_tokens < 16384`, missing model, `top_p < 0.5` |
+| Live model probe (opt-in) | 1 tiny call per model | a model that answers a tool-calling request with nothing — the exact failure above |
+
+```bash
+# Recommended: detect a broken model for the cost of one small request
+export SYLLABUS_PREFLIGHT_PROBE=1
+
+# Bypass both pre-flight gates (e.g. while debugging)
+export SYLLABUS_SKIP_PREFLIGHT=1
+
+# Allow one retry before aborting on an empty response (default is 0 retries)
+export AGENT_LLM_FUTILE_RETRIES=2
+```
+
+Genuinely transient failures (HTTP 429, timeouts, connection resets) are still
+retried automatically up to 3 times with exponential backoff —
+`AGENT_LLM_FUTILE_RETRIES` does not affect them.
+
 ### `--resume-from` fails
 
 Pass the **run directory** (not `intake_session.json`):
@@ -258,7 +298,7 @@ python src/main.py "ML Basics" --load-session output/2026-08-22_153000_ML_Basics
 ## Development
 
 ```bash
-# Run tests (504 tests)
+# Run tests (647 tests)
 pytest
 
 # Lint and format
