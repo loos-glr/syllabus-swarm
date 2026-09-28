@@ -80,7 +80,6 @@ INTAKE_SPECIALIST: str = "INTAKE_SPECIALIST"
 QA_REVIEWER: str = "QA_REVIEWER"
 THEORY_INSTRUCTOR: str = "THEORY_INSTRUCTOR"
 EDUCATION_DIRECTOR: str = "EDUCATION_DIRECTOR"
-MEDIA_STRATEGIST: str = "MEDIA_STRATEGIST"
 VIDEO_ENGINEER: str = "VIDEO_ENGINEER"
 INSTRUCTIONAL_COORDINATOR: str = "INSTRUCTIONAL_COORDINATOR"
 PRESENTATION_DESIGNER: str = "PRESENTATION_DESIGNER"
@@ -94,11 +93,22 @@ _KNOWN_ROLES: tuple[str, ...] = (
     QA_REVIEWER,
     THEORY_INSTRUCTOR,
     EDUCATION_DIRECTOR,
-    MEDIA_STRATEGIST,
     VIDEO_ENGINEER,
     INSTRUCTIONAL_COORDINATOR,
     PRESENTATION_DESIGNER,
 )
+
+# ---------------------------------------------------------------------------
+# System One (Jev) decision-task constants
+# ---------------------------------------------------------------------------
+# These are NOT CrewAI agent roles: they identify the deterministic decision
+# tasks that are answered by the non-generative System One model.  Each task
+# can be tuned independently (`SYSTEM_ONE_{TASK}_{PROPERTY}`).
+SYSTEM_ONE: str = "SYSTEM_ONE"
+MODALITY_ROUTER: str = "MODALITY_ROUTER"
+QA_SCORER: str = "QA_SCORER"
+SYLLABUS_GATE: str = "SYLLABUS_GATE"
+SYSTEM_ONE_TASKS: tuple[str, ...] = (MODALITY_ROUTER, QA_SCORER, SYLLABUS_GATE)
 
 # ---------------------------------------------------------------------------
 # Property names used in environment variable construction.
@@ -139,6 +149,19 @@ _REASONING_MODEL_PATTERNS: tuple[str, ...] = (
     "gpt-5",
 )
 _MIN_SAFE_MAX_TOKENS_REASONING: int = 16384
+
+# ---------------------------------------------------------------------------
+# System One (Jev) defaults — the non-generative decision model
+# ---------------------------------------------------------------------------
+# System One is NOT an LLM: it exposes no temperature/top_p/max_tokens.  Only
+# a model id, an endpoint, an API key and a timeout are configurable.  The
+# base URL is a *distinct* environment variable (SYSTEM_ONE_BASE_URL) so this
+# module keeps exactly one OpenRouter URL literal (see test_llm_factory.py).
+_SYSTEM_ONE_DEFAULT_MODEL: str = "jev-latest"
+_SYSTEM_ONE_DEFAULT_BASE_URL: str = "https://api.typesafe.ai"
+_SYSTEM_ONE_DEFAULT_TIMEOUT: float = 10.0
+_SYSTEM_ONE_ENV_PREFIX: str = "SYSTEM_ONE"
+
 # ---------------------------------------------------------------------------
 # Internal helpers
 # ---------------------------------------------------------------------------
@@ -352,6 +375,129 @@ def build_llm_for_agent(
         top_p=top_p,
         max_tokens=max_tokens,
     )
+
+
+# ---------------------------------------------------------------------------
+# System One (Jev) — decision client factory
+# ---------------------------------------------------------------------------
+# Mirrors the generative 3-tier fallback chain so every decision task can be
+# tuned independently without touching code:
+#   1. SYSTEM_ONE_{TASK}_{PROPERTY}  — per-decision-task override
+#   2. SYSTEM_ONE_{PROPERTY}         — decision-layer default
+#   3. hardcoded default             — baked-in fallback
+
+
+def _resolve_system_one_string(task: str, property_name: str, *, default: str) -> str:
+    """Resolve a System One string property through the 3-tier chain."""
+    if task and task != SYSTEM_ONE:
+        per_task = os.getenv(f"{_SYSTEM_ONE_ENV_PREFIX}_{task}_{property_name}")
+        if per_task is not None:
+            return per_task
+    value = os.getenv(f"{_SYSTEM_ONE_ENV_PREFIX}_{property_name}")
+    if value is not None:
+        return value
+    return default
+
+
+def resolve_system_one_model(task: str = SYSTEM_ONE) -> str:
+    """Return the System One model id for *task* (e.g. ``"jev-latest"``)."""
+    return _resolve_system_one_string(task, "MODEL", default=_SYSTEM_ONE_DEFAULT_MODEL)
+
+
+def resolve_system_one_base_url() -> str:
+    """Return the System One API base URL, respecting ``SYSTEM_ONE_BASE_URL``."""
+    return _resolve_system_one_string(
+        SYSTEM_ONE,
+        "BASE_URL",
+        default=_SYSTEM_ONE_DEFAULT_BASE_URL,
+    )
+
+
+def resolve_system_one_api_key() -> str:
+    """Return the System One API key, falling back to ``TYPESAFE_API_KEY``."""
+    return (
+        os.getenv("SYSTEM_ONE_API_KEY")
+        or os.getenv("TYPESAFE_API_KEY")
+        or ""
+    )
+
+
+def resolve_system_one_timeout() -> float:
+    """Return the per-request System One timeout in seconds."""
+    raw = _resolve_system_one_string(
+        SYSTEM_ONE,
+        "TIMEOUT",
+        default=str(_SYSTEM_ONE_DEFAULT_TIMEOUT),
+    )
+    try:
+        value = float(raw)
+    except (TypeError, ValueError):
+        return _SYSTEM_ONE_DEFAULT_TIMEOUT
+    return value if value > 0 else _SYSTEM_ONE_DEFAULT_TIMEOUT
+
+
+def system_one_enabled() -> bool:
+    """Return False when ``SYSTEM_ONE_ENABLED`` explicitly disables the layer."""
+    raw = (os.getenv(f"{_SYSTEM_ONE_ENV_PREFIX}_ENABLED") or "").strip().lower()
+    return raw not in {"0", "false", "no", "off"}
+
+
+def build_system_one_client(
+    *,
+    task: str = SYSTEM_ONE,
+    api_key: str | None = None,
+):
+    """Build the non-generative System One decision client for *task*.
+
+    Parameters
+    ----------
+    task : str
+        Decision-task identifier (``MODALITY_ROUTER``, ``QA_SCORER`` or
+        ``SYLLABUS_GATE``).  Used to resolve per-task model overrides.
+    api_key : str or None
+        Explicit key; otherwise resolved from ``SYSTEM_ONE_API_KEY`` /
+        ``TYPESAFE_API_KEY``.
+
+    Returns
+    -------
+    SystemOneClient or None
+        A live :class:`src.system_one.TypeSafeSystemOneClient` when a key is
+        configured, a degraded :class:`src.system_one.FakeSystemOneClient`
+        when the layer is explicitly disabled (``SYSTEM_ONE_ENABLED=0``), or
+        ``None`` when no API key is available so the caller can decide how to
+        degrade.
+    """
+    from src.system_one import (  # noqa: PLC0415 - Layer 4 -> Layer 4, kept local
+        FakeSystemOneClient,
+        TypeSafeSystemOneClient,
+    )
+
+    if not system_one_enabled():
+        return FakeSystemOneClient(model="system-one-disabled", heuristic=True)
+
+    resolved_key = api_key if api_key is not None else resolve_system_one_api_key()
+    if not resolved_key:
+        return None
+
+    return TypeSafeSystemOneClient(
+        api_key=resolved_key,
+        model=resolve_system_one_model(task),
+        base_url=resolve_system_one_base_url(),
+        timeout=resolve_system_one_timeout(),
+    )
+
+
+def get_effective_system_one_config(task: str = SYSTEM_ONE) -> dict[str, object]:
+    """Return the resolved System One configuration for diagnostics."""
+    key_status = "set" if resolve_system_one_api_key() else "missing — decisions disabled"
+    return {
+        "task": task,
+        "model": resolve_system_one_model(task),
+        "base_url": resolve_system_one_base_url(),
+        "timeout": resolve_system_one_timeout(),
+        "enabled": system_one_enabled(),
+        "api_key_status": key_status,
+    }
 
 
 def get_effective_config(agent_role: str) -> dict[str, object]:
@@ -576,6 +722,16 @@ def list_agent_configs() -> None:
     api_key = os.getenv("OPENROUTER_API_KEY", "")
     status = "set" if api_key else "missing — authentication will fail"
     print(f"  API Key:              {status}")
+    print()
+
+    # --- System One (Jev) decision layer ---
+    print("-- System One (Jev) Decision Layer " + "-" * 29)
+    for task in (SYSTEM_ONE, *SYSTEM_ONE_TASKS):
+        cfg = get_effective_system_one_config(task)
+        label = cfg["model"] if cfg["enabled"] else "(disabled)"
+        print(f"  {task:.<40} {label}")
+    print(f"  {'base_url':.<40} {resolve_system_one_base_url()}")
+    print(f"  {'api_key':.<40} {'set' if resolve_system_one_api_key() else 'missing'}")
     print()
 
     # --- LLM env vars ---

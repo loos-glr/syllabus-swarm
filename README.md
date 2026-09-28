@@ -36,19 +36,53 @@ python3.12 -m src.llm_factory
 
 ## Architecture
 
-syllabus-swarm is built on **nine specialized AI agents**, each assigned a model optimized for its specific role:
+syllabus-swarm is built on **eight specialized AI agents**, each assigned a model optimized for its specific role — plus a non-generative **System One** decision model for routing, QA scoring and gating:
 
 | Agent | Role | Default Model | Rationale |
 |---|---|---|---|
 | **Intake Specialist** | Interviews the user to extract technical and pedagogical requirements mapped to Dutch SBB Kwalificatiedossiers | `openrouter/deepseek/deepseek-v4-pro` | Strong reasoning for synthesising rich course context from user answers, with deep knowledge of MBO4 vocational education pathways (BOL/BBL) and kerntaken (P1-K1 through P4-K1). |
 | **Curriculum Architect** | Designs syllabi using the Humanics framework (data literacy, technological literacy, human literacy) + experiential learning | `openrouter/deepseek/deepseek-v4-pro` | State-of-the-art multi-step reasoning for crafting logically coherent, pedagogically sound syllabi that span weeks of content across three integrated literacies. |
-| **Education Director** | Audits syllabi for time-budget math, realistic MBO4 workloads, and scheduling contradictions before content generation proceeds | `openrouter/deepseek/deepseek-v4-pro` | Structured analysis and precise feasibility calculations to ensure every syllabus is deliverable within real classroom constraints. |
+| **Education Director** | Articulates the System One syllabus-gate blockers and delegates a targeted rewrite to the Curriculum Architect | `openrouter/deepseek/deepseek-v4-pro` | The advance/rewrite verdict is deterministic (System One); this model is only used for feedback prose and delegation. |
 | **Theory Instructor** | Transforms abstract syllabus concepts into interactive learning artifacts (HTML/JS visualizations, pausing terminal scripts, Mermaid.js diagrams) | `openrouter/deepseek/deepseek-v4-pro` | Strong writing + code generation for producing self-contained, runnable interactive artifacts that vocational students can engage with before starting hands-on labs. |
 | **Lab & Project Developer** | Generates tiered hands-on coding exercises with starter code and fully-commented solution keys | `openrouter/qwen/qwen3-coder` | Purpose-built for programming tasks — produces cleaner starter code, more idiomatic solutions, and fewer hallucinated API calls than general-purpose models. |
-| **QA Reviewer** | Reviews all generated labs for technical correctness (syntax, imports, runnability) and MBO4 didactic appropriateness | `openrouter/qwen/qwen3-coder` | Purpose-built for code understanding and review — catches syntax errors, missing imports, hallucinated variables, and didactic issues before they reach students. |
-| **Media Strategist** | Analyzes curriculum module complexity and routes each module to the optimal instructional modality (text, interactive web, terminal CLI, or Video-as-Code) | `openrouter/deepseek/deepseek-v4-pro` | Strong pedagogical reasoning for calibrating complexity scores and producing well-justified `ModalityDecision` outputs that drive the entire downstream generation pipeline. |
+| **QA Reviewer** | Consumes System One rubric scores for generated labs and theory, formats the QA report and delegates fixes for flagged artifacts | `openrouter/qwen/qwen3-coder` | The pass/fail verdict is deterministic (System One); this model is only used for report formatting and fix instructions. |
 | **Video Engineer** | Generates deterministic temporal code (React/Remotion JSX) for educational video compositions — pure structural data, no prose | `openrouter/deepseek/deepseek-v4-pro` | Balances creative temporal animation design with correct, runnable TypeScript/JSX output; produces `RemotionManifest` descriptors for version-controllable video compositions. |
 | **Output Exporter** | Compiles and packages all materials into clean directory structures and a consolidated manifest | `openrouter/deepseek/deepseek-v4-flash-latest` | Low-latency, low-cost completions ideal for manifest generation, file assembly, and Markdown packaging — reliability without burning reasoning-token budgets. |
+
+> **Retired agent:** the former **Media Strategist** has been removed. Modality
+> routing is now a deterministic **System One (Jev)** decision — see
+> [System One decision layer](#system-one-decision-layer) below.
+
+### System One decision layer
+
+Routing, QA verdicts and the syllabus handoff gate are **not** written by a
+generative model. They are answered by a fast, schema-driven **System One**
+model (TypeSafe AI's `Jev`) that returns typed `choice` / `score` / `noul`
+answers with calibrated confidence — 70–500 ms per call, no prose to parse.
+
+| Decision | Module | Primitive | Typed result |
+|---|---|---|---|
+| Modality routing | `src/evaluators/modality_router.py` | `choice` + `score` | `ModalityDecision` |
+| QA scoring | `src/evaluators/qa_scorer.py` | `score` × criteria + `noul` | `QAScore` |
+| Syllabus gate | `src/evaluators/syllabus_gate.py` | `noul` × 2 + `score` | `SyllabusGateDecision` |
+
+Everything that can be computed exactly — syntax checks, required-section
+detection, duration extraction — stays in plain Python. The model only makes
+bounded semantic judgments, and every decision below the configured confidence
+threshold is flagged `needs_review` for escalation.
+
+```bash
+# .env — enable the decision layer
+SYSTEM_ONE_API_KEY=your_typesafe_api_key_here   # or TYPESAFE_API_KEY
+SYSTEM_ONE_MODEL=jev-latest
+# Per-task override, e.g. a faster model for routing:
+# SYSTEM_ONE_MODALITY_ROUTER_MODEL=jev-fast
+SYSTEM_ONE_ENABLED=1            # set to 0 for degraded offline mode
+```
+
+Run `python -m src.llm_factory` to print the resolved System One configuration
+alongside the per-agent LLM configuration.
+
 
 ### Pipeline & Output Structure
 
@@ -74,7 +108,10 @@ output/
 | `CourseGraph` | `src/models.py` | Machine-readable course metadata — composes `CourseSpecification` |
 | `ModuleSummary` | `src/models.py` | Lightweight per-module record |
 | `ModalityType` | `src/models.py` | Enum: `CLASSIC_READER`, `INTERACTIVE_WEB`, `INTERACTIVE_CLI`, `VIDEO_AS_CODE` |
-| `ModalityDecision` | `src/models.py` | Media Strategist routing output with complexity score (0.0–1.0) |
+| `ModalityDecision` | `src/models.py` | Typed routing decision with provenance: complexity score, confidence, per-option probabilities |
+| `RubricCriterion` | `src/models.py` | One scored QA rubric dimension (key, label, ordered 2–10 level scale, weight) |
+| `QAScore` | `src/models.py` | Deterministic QA verdict per artifact: score, confidence, per-criterion scores, `pass`/`needs_fixes` |
+| `SyllabusGateDecision` | `src/models.py` | Deterministic syllabus handoff gate: completeness probability, quality score, machine-readable blockers |
 | `RemotionManifest` | `src/models.py` | Deterministic VaC composition descriptor |
 | `TierState` | `src/models.py` | Per-tier lab completion status for resume tracking |
 | `GenerationState` | `src/models.py` | Full pipeline progress snapshot for `--resume-from` |

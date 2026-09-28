@@ -5,9 +5,19 @@ Covers:
 * the three-way LLM-error classifier (retryable / futile / deterministic),
 * the empty-LLM-response error annotation,
 * :func:`_kickoff_with_retry`, which retries genuinely transient failures but
-  aborts immediately on *futile* ones so credits are not burned, and
+  aborts immediately on *futile* ones so credits are not burned,
 * the run-level circuit breaker (:class:`_FatalAbortGuard`) that skips every
-  remaining pipeline stage once a futile failure is detected.
+  remaining pipeline stage once a futile failure is detected, and
+* the deterministic-plane contract: System One decision failures are
+  *deterministic* (never retryable), so QA/routing/gate errors surface
+  immediately instead of burning retries.
+
+.. note::
+
+   After the System One migration the QA verdict is produced by
+   :mod:`src.evaluators.qa_scorer`, not by an LLM judge.  The retry helpers in
+   this module now govern only the *remaining generative* stages (syllabus,
+   theory, labs, lesson plans, presentations).
 """
 
 from __future__ import annotations
@@ -320,4 +330,66 @@ class TestFatalAbortGuard:
 
         assert guard.detail is not None
         assert "AGENT_THEORY_INSTRUCTOR_MAX_TOKENS=16384" in guard.detail
+
+
+# ---------------------------------------------------------------------------
+# Deterministic decision plane (System One) — failure semantics
+# ---------------------------------------------------------------------------
+
+
+class TestSystemOneFailureSemantics:
+    """System One errors are deterministic: never retried, always surfaced.
+
+    This is the counterpart to the generative retry logic above.  Because the
+    QA verdict, modality route and syllabus gate are no longer LLM judgments,
+    a decision-layer failure must fail *fast* with an actionable message
+    instead of being retried as if it were a transient provider blip.
+    """
+
+    def test_system_one_error_is_deterministic(self) -> None:
+        from src.system_one import SystemOneError
+
+        assert _classify_llm_error(SystemOneError("decision failed")) == "deterministic"
+        assert not _is_transient_llm_error(SystemOneError("decision failed"))
+        assert not _is_futile_llm_error(SystemOneError("decision failed"))
+
+    def test_system_one_error_is_not_retried(self) -> None:
+        """_kickoff_with_retry must abort immediately on a deterministic error."""
+        from src.system_one import SystemOneError
+
+        crew = MagicMock()
+        crew.kickoff.side_effect = SystemOneError("decision failed")
+
+        with patch("src.crews.syllabus_crew.time.sleep") as mock_sleep:
+            with pytest.raises(SystemOneError):
+                _kickoff_with_retry(lambda: crew, futile_attempts=3)
+
+        assert crew.kickoff.call_count == 1
+        mock_sleep.assert_not_called()
+
+    def test_heuristic_offline_answers_always_escalate(self) -> None:
+        """Offline/degraded mode must never auto-approve a decision."""
+        from src.evaluators.qa_scorer import score_artifact
+        from src.system_one import FakeSystemOneClient
+
+        score = score_artifact(
+            "content",
+            content_ref="offline",
+            client=FakeSystemOneClient(),  # heuristic mode
+        )
+        assert score.needs_review is True
+        assert score.confidence == 0.0
+
+    def test_gate_offline_mode_does_not_approve(self) -> None:
+        """The syllabus gate must not advance on un-calibrated offline answers."""
+        from src.evaluators.syllabus_gate import assess_syllabus
+        from src.system_one import FakeSystemOneClient
+
+        decision = assess_syllabus(
+            "# Syllabus\n",
+            client=FakeSystemOneClient(),
+            course_name="Offline",
+        )
+        assert decision.complete is False
+        assert decision.needs_review is True
 

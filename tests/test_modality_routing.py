@@ -1,8 +1,20 @@
-"""Tests for modality routing and state machine branching (Issue #10)."""
+"""Tests for modality routing and state machine branching.
+
+The routing decision is produced deterministically by the System One model
+(:mod:`src.evaluators.modality_router`) — the former Media Strategist agent has
+been retired.  These tests therefore assert against the **real** ``ROUTING_MAP``
+and the swarm state mapping rather than a locally-redefined dictionary.
+"""
 
 from __future__ import annotations
 
-from src.crews.syllabus_crew import SwarmState
+from src.crews.syllabus_crew import (
+    MODALITY_STATE_MAP,
+    ROUTING_MAP,
+    SwarmState,
+    next_state_after_routing,
+)
+from src.evaluators.modality_router import routing_target
 from src.models import ModalityDecision, ModalityType
 
 
@@ -58,15 +70,31 @@ class TestModalityRoutingLogic:
         assert decision.complexity_score == 0.7
 
     def test_routing_dispatcher_handles_all_modalities(self) -> None:
-        """Every ModalityType should have a routing path."""
-        routing_map = {
-            ModalityType.CLASSIC_READER: "theory_instructor",
-            ModalityType.VIDEO_AS_CODE: "video_engineer",
-            ModalityType.INTERACTIVE_WEB: "theory_instructor",
-            ModalityType.INTERACTIVE_CLI: "theory_instructor",
-        }
+        """Every ModalityType has a route in the real ROUTING_MAP."""
         for modality in ModalityType:
-            assert modality in routing_map, f"No route for {modality}"
+            assert modality in ROUTING_MAP, f"No route for {modality}"
+            assert ROUTING_MAP[modality] in {"theory_instructor", "video_engineer"}
+
+    def test_defensive_routing_target_lookup(self) -> None:
+        """routing_target() is the single source of truth for the downstream agent."""
+        assert routing_target(ModalityType.VIDEO_AS_CODE) == "video_engineer"
+
+    def test_state_map_covers_every_modality(self) -> None:
+        """Every modality maps to a swarm state."""
+        for modality in ModalityType:
+            assert modality in MODALITY_STATE_MAP, f"No state for {modality}"
+
+    def test_modality_decision_provenance_defaults(self) -> None:
+        """Provenance fields are optional so legacy callers keep working."""
+        decision = ModalityDecision(
+            module_name="Syntax",
+            modality=ModalityType.CLASSIC_READER,
+            rationale="Deterministic.",
+            complexity_score=0.3,
+        )
+        assert decision.confidence is None
+        assert decision.model_version is None
+        assert decision.needs_review is False
 
 
 class TestModalityRoutingIntegration:
@@ -80,13 +108,7 @@ class TestModalityRoutingIntegration:
             rationale="Needs animation.",
             complexity_score=0.8,
         )
-        # Simulate: if modality is VIDEO_AS_CODE, next state is VIDEO_GENERATING
-        if decision.modality == ModalityType.VIDEO_AS_CODE:
-            next_state = SwarmState.VIDEO_GENERATING
-        else:
-            next_state = SwarmState.GENERATING
-
-        assert next_state == SwarmState.VIDEO_GENERATING
+        assert next_state_after_routing(decision.modality) == SwarmState.VIDEO_GENERATING
 
     def test_routing_stays_in_generating_for_classic_reader(self) -> None:
         """CLASSIC_READER keeps execution in standard GENERATING flow."""
@@ -96,9 +118,9 @@ class TestModalityRoutingIntegration:
             rationale="Text is sufficient.",
             complexity_score=0.3,
         )
-        if decision.modality == ModalityType.VIDEO_AS_CODE:
-            next_state = SwarmState.VIDEO_GENERATING
-        else:
-            next_state = SwarmState.GENERATING
+        assert next_state_after_routing(decision.modality) == SwarmState.GENERATING
 
-        assert next_state == SwarmState.GENERATING
+    def test_interactive_modalities_stay_in_generating(self) -> None:
+        """Interactive web/CLI are produced by the Theory Instructor."""
+        for modality in (ModalityType.INTERACTIVE_WEB, ModalityType.INTERACTIVE_CLI):
+            assert next_state_after_routing(modality) == SwarmState.GENERATING

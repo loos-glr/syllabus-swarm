@@ -39,6 +39,14 @@ from src.agents.lab_developer import get_lab_developer
 from src.agents.presentation_designer import get_presentation_designer
 from src.agents.qa_reviewer import get_qa_reviewer
 from src.agents.theory_instructor import get_theory_instructor
+from src.evaluators import (
+    ROUTING_MAP,  # noqa: F401 — re-exported for callers/tests
+    QAScoring,
+    SyllabusGate,
+    qa_passed,
+    render_gate_report,
+    render_qa_report,
+)
 from src.exporters import (
     update_output_manifest,
     write_file,
@@ -49,12 +57,15 @@ from src.exporters.theory_validator import (
     validate_theory_directory,
 )
 from src.llm_factory import (
+    QA_SCORER,
+    SYLLABUS_GATE,
     ConfigIssue,
     audit_agent_configs,
+    build_system_one_client,
     format_config_issues,
     has_fatal_config_issues,
 )
-from src.models import GenerationState, TierState
+from src.models import GenerationState, ModalityType, QAScore, SyllabusGateDecision, TierState
 from src.preflight import (
     ProbeResult,
     fatal_probe_results,
@@ -62,6 +73,7 @@ from src.preflight import (
     probe_agent_models,
     probe_enabled,
 )
+from src.system_one import SystemOneError
 from src.tasks.lab_generation import create_lab_generation_task
 from src.tasks.lesson_plan_generation import create_lesson_plan_task
 from src.tasks.presentation_generation import create_presentation_task
@@ -92,6 +104,33 @@ class SwarmState(str, Enum):
     VIDEO_GENERATING = "video_generating"
     LESSON_PLAN_GENERATING = "lesson_plan_generating"
     PRESENTATION_GENERATING = "presentation_generating"
+
+
+# ---------------------------------------------------------------------------
+# Modality routing — deterministic (System One)
+# ---------------------------------------------------------------------------
+# The former ``Media Strategist`` agent has been retired: the routing decision
+# is now produced by ``src.evaluators.modality_router`` and mapped onto the
+# swarm state machine below.  ``ROUTING_MAP`` (modality -> generator name) is
+# re-exported so tests and callers have a single source of truth.
+
+#: ``ModalityType`` -> the next :class:`SwarmState` after routing.
+MODALITY_STATE_MAP: dict[ModalityType, SwarmState] = {
+    ModalityType.CLASSIC_READER: SwarmState.GENERATING,
+    ModalityType.INTERACTIVE_WEB: SwarmState.GENERATING,
+    ModalityType.INTERACTIVE_CLI: SwarmState.GENERATING,
+    ModalityType.VIDEO_AS_CODE: SwarmState.VIDEO_GENERATING,
+}
+
+
+def next_state_after_routing(modality: ModalityType) -> SwarmState:
+    """Return the :class:`SwarmState` the orchestrator advances to.
+
+    ``VIDEO_AS_CODE`` routes to :attr:`SwarmState.VIDEO_GENERATING`; every
+    other modality stays in the standard :attr:`SwarmState.GENERATING` flow
+    (theory artifacts are produced by the Theory Instructor).
+    """
+    return MODALITY_STATE_MAP[modality]
 
 
 # ---------------------------------------------------------------------------
@@ -197,6 +236,7 @@ class FatalLLMError(RuntimeError):
         super().__init__(message)
         self.agent_role = agent_role
         self.stage = stage
+
 
 # Patterns used by :func:`_scan_for_stray_generated_files` to detect
 # agent-generated artefacts written straight into the ``output/`` root
@@ -453,11 +493,7 @@ def _kickoff_with_retry(
         The last exception when retryable attempts are exhausted, or
         immediately for deterministic errors.
     """
-    futile_budget = (
-        futile_attempts
-        if futile_attempts is not None
-        else _resolve_futile_attempts()
-    )
+    futile_budget = futile_attempts if futile_attempts is not None else _resolve_futile_attempts()
     last_exc: BaseException | None = None
     futile_seen = 0
 
@@ -604,9 +640,7 @@ class _FatalAbortGuard:
             self._stage = stage
             self._agent_role = agent_role
             self._detail = _annotate_empty_llm_response(str(exc), agent_role)
-            _print_abort_banner(
-                stage=stage, agent_role=agent_role, detail=self._detail
-            )
+            _print_abort_banner(stage=stage, agent_role=agent_role, detail=self._detail)
         return self.reason or ""
 
     def should_skip(self, stage_label: str) -> bool:
@@ -728,9 +762,7 @@ def _run_live_model_probe(
                 )
 
     if fatal and strict:
-        details = "\n".join(
-            f"  ⛔  {result.model}  ({result.detail})" for result in fatal
-        )
+        details = "\n".join(f"  ⛔  {result.model}  ({result.detail})" for result in fatal)
         print(
             "\n"
             + "=" * 74
@@ -1189,6 +1221,82 @@ def _build_top_level_lab_readme(
     return "\n".join(lines) + "\n"
 
 
+# ---------------------------------------------------------------------------
+# Deterministic decision helpers (System One / Jev)
+# ---------------------------------------------------------------------------
+# These build the non-generative evaluators on demand.  When no System One
+# client is configured the helpers return ``None`` and the caller falls back
+# to the legacy generative path, so the pipeline keeps working for operators
+# without a System One key.
+
+
+def _build_syllabus_gate() -> SyllabusGate | None:
+    """Return a System One syllabus gate, or ``None`` when unconfigured."""
+    client = build_system_one_client(task=SYLLABUS_GATE)
+    return SyllabusGate(client) if client is not None else None
+
+
+def _build_qa_scorer() -> QAScoring | None:
+    """Return a System One QA scorer, or ``None`` when unconfigured."""
+    client = build_system_one_client(task=QA_SCORER)
+    return QAScoring(client) if client is not None else None
+
+
+def _collect_qa_artifacts(run_dir: Path, *, limit: int = 40) -> list[tuple[str, str]]:
+    """Collect ``(content_ref, content)`` pairs from the run's ``labs/`` tree.
+
+    Only text artifacts are collected (Markdown, HTML, shell, and the source
+    languages used across the cohort profiles), and the list is capped at
+    *limit* entries to bound the cost of a QA pass.
+    """
+    suffixes = {
+        # docs & web
+        ".md",
+        ".markdown",
+        ".html",
+        ".htm",
+        ".txt",
+        # scripts & shell
+        ".sh",
+        ".bash",
+        # javascript / typescript
+        ".js",
+        ".mjs",
+        ".cjs",
+        ".jsx",
+        ".ts",
+        ".tsx",
+        # other profile languages
+        ".py",
+        ".php",
+        ".java",
+        ".cs",
+        ".sql",
+        # structured config
+        ".json",
+        ".yml",
+        ".yaml",
+    }
+    artifacts: list[tuple[str, str]] = []
+    labs_dir = run_dir / "labs"
+    if not labs_dir.exists():
+        return artifacts
+
+    for path in sorted(labs_dir.rglob("*")):
+        if len(artifacts) >= limit:
+            break
+        if not path.is_file() or path.name.startswith("."):
+            continue
+        if path.suffix.lower() not in suffixes:
+            continue
+        try:
+            content = path.read_text(encoding="utf-8")
+        except (OSError, UnicodeDecodeError):
+            continue
+        artifacts.append((str(path.relative_to(run_dir).as_posix()), content))
+    return artifacts
+
+
 def run_syllabus_crew(
     course_context: str,
     *,
@@ -1275,9 +1383,7 @@ def run_syllabus_crew(
             raise FatalLLMError(
                 "Pre-flight configuration audit failed: "
                 + "; ".join(
-                    issue.message
-                    for issue in preflight_issues
-                    if issue.severity == "fatal"
+                    issue.message for issue in preflight_issues if issue.severity == "fatal"
                 ),
                 stage="pre-flight",
             )
@@ -1286,9 +1392,7 @@ def run_syllabus_crew(
     # Catches a *broken model* — one that answers a tool-calling request with
     # nothing — before a single generation credit is spent.
     if probe_enabled():
-        fatal_probes = fatal_probe_results(
-            _run_live_model_probe(verbose=verbose, strict=True)
-        )
+        fatal_probes = fatal_probe_results(_run_live_model_probe(verbose=verbose, strict=True))
         if fatal_probes:
             raise FatalLLMError(
                 "Pre-flight model probe failed: "
@@ -1456,50 +1560,81 @@ def run_syllabus_crew(
     elif abort_guard.should_skip("Syllabus Feasibility Audit"):
         syllabus_review_error = abort_guard.reason
     elif syllabus_raw:
-        try:
-            education_director = get_education_director(verbose=verbose)
-            review_task = create_syllabus_review_task(
-                agent=education_director,
-                course_name=course_name,
-                syllabus_context=syllabus_raw,
-                material_language=material_language,
-                human_feedback=human_feedback,
-                verbose=verbose,
-            )
-
-            # CRITICAL: Both agents must be in the SAME Crew array so
-            # the Education Director can delegate fixes back to the
-            # Curriculum Architect.
-            review_crew = Crew(
-                agents=[architect, education_director],
-                tasks=[review_task],
-                process=Process.sequential,
-                verbose=verbose,
-            )
-            review_result = review_crew.kickoff()
-            syllabus_review_report = (
-                review_result.raw if hasattr(review_result, "raw") else str(review_result)
-            ).strip()
-
-            if syllabus_review_report:
-                syllabus_review_ok = True
+        # ── Deterministic gate (System One) ────────────────────────────
+        # When a System One client is configured, the completeness verdict is
+        # authoritative: the generative Education Director crew is only used to
+        # delegate the *blockers* back to the Curriculum Architect — it never
+        # decides pass/fail.  Without a System One client we fall back to the
+        # legacy generative audit.
+        gate_decision: SyllabusGateDecision | None = None
+        syllabus_gate = _build_syllabus_gate()
+        if syllabus_gate is not None:
+            try:
+                gate_decision = syllabus_gate.assess(
+                    syllabus_raw,
+                    course_name=course_name,
+                )
+            except SystemOneError as exc:
                 if verbose:
-                    print("  ✅  Syllabus Feasibility Audit completed.")
-            else:
-                syllabus_review_error = "Education Director produced no output."
+                    print(f"  [System One] Syllabus gate unavailable: {exc}", file=sys.stderr)
 
-        except Exception as exc:
-            if _is_futile_llm_error(exc):
-                _trip_guard(
-                    "Syllabus Feasibility Audit", "EDUCATION_DIRECTOR", exc
-                )
-                syllabus_review_error = abort_guard.reason
-            else:
-                syllabus_review_error = _annotate_iter_exhaustion(
-                    str(exc), "EDUCATION_DIRECTOR", parent_error=exc
-                )
+        if gate_decision is not None and gate_decision.complete:
+            syllabus_review_ok = True
+            syllabus_review_report = render_gate_report(gate_decision, course_name=course_name)
             if verbose:
-                print(f"  ❌  Syllabus Feasibility Audit failed: {exc}", file=sys.stderr)
+                print("  ✅  Syllabus gate: complete (deterministic sign-off).")
+        else:
+            try:
+                education_director = get_education_director(verbose=verbose)
+                review_task = create_syllabus_review_task(
+                    agent=education_director,
+                    course_name=course_name,
+                    syllabus_context=syllabus_raw,
+                    material_language=material_language,
+                    human_feedback=human_feedback,
+                    gate_decision=gate_decision,
+                    verbose=verbose,
+                )
+
+                # CRITICAL: Both agents must be in the SAME Crew array so
+                # the Education Director can delegate fixes back to the
+                # Curriculum Architect.
+                review_crew = Crew(
+                    agents=[architect, education_director],
+                    tasks=[review_task],
+                    process=Process.sequential,
+                    verbose=verbose,
+                )
+                review_result = review_crew.kickoff()
+                syllabus_review_report = (
+                    review_result.raw if hasattr(review_result, "raw") else str(review_result)
+                ).strip()
+
+                if gate_decision is not None:
+                    # Deterministic gate is authoritative.
+                    syllabus_review_ok = gate_decision.complete
+                    if not syllabus_review_ok:
+                        syllabus_review_error = "System One gate flagged blockers: " + ", ".join(
+                            gate_decision.blockers
+                        )
+                elif syllabus_review_report:
+                    syllabus_review_ok = True
+                else:
+                    syllabus_review_error = "Education Director produced no output."
+
+                if syllabus_review_ok and verbose:
+                    print("  ✅  Syllabus Feasibility Audit completed.")
+
+            except Exception as exc:
+                if _is_futile_llm_error(exc):
+                    _trip_guard("Syllabus Feasibility Audit", "EDUCATION_DIRECTOR", exc)
+                    syllabus_review_error = abort_guard.reason
+                else:
+                    syllabus_review_error = _annotate_iter_exhaustion(
+                        str(exc), "EDUCATION_DIRECTOR", parent_error=exc
+                    )
+                if verbose:
+                    print(f"  ❌  Syllabus Feasibility Audit failed: {exc}", file=sys.stderr)
     else:
         syllabus_review_error = "Skipped — Curriculum Architect produced no syllabus to audit."
 
@@ -1628,8 +1763,7 @@ def run_syllabus_crew(
                     )
                     if verbose:
                         print(
-                            f"  ⛔  Theory for {tier_dir_name} aborted — "
-                            "remaining tiers skipped.",
+                            f"  ⛔  Theory for {tier_dir_name} aborted — remaining tiers skipped.",
                             file=sys.stderr,
                         )
                     break
@@ -1921,12 +2055,8 @@ def run_syllabus_crew(
 
                 except Exception as exc:
                     if _is_futile_llm_error(exc) or isinstance(exc, FatalLLMError):
-                        _trip_guard(
-                            f"Labs ({tier_name})", "LAB_DEVELOPER", exc
-                        )
-                        print(
-                            f"  ⛔  {tier_name}: aborted — remaining tiers skipped."
-                        )
+                        _trip_guard(f"Labs ({tier_name})", "LAB_DEVELOPER", exc)
+                        print(f"  ⛔  {tier_name}: aborted — remaining tiers skipped.")
                     else:
                         print(f"  ❌  {tier_name}: {exc}")
                     return False
@@ -2014,12 +2144,58 @@ def run_syllabus_crew(
     qa_error: str | None = None
     qa_report: str | None = None
 
+    # ── Deterministic QA scoring (System One) ──────────────────────────
+    # When a System One client is configured, the QA verdict is the typed
+    # aggregate of per-artifact rubric scores rather than an LLM judgment.
+    qa_scores: list[QAScore] = []
+    if not skip_qa and (labs_ok or theory_ok):
+        qa_scorer = _build_qa_scorer()
+        if qa_scorer is not None:
+            try:
+                artifacts = _collect_qa_artifacts(run_dir)
+                qa_scores = [
+                    qa_scorer.score(
+                        content,
+                        content_ref=ref,
+                        kind=(
+                            "theory"
+                            if "/theory/" in ref.replace("\\", "/")
+                            or ref.endswith((".html", ".htm", ".sh"))
+                            else "lab"
+                        ),
+                    )
+                    for ref, content in artifacts
+                ]
+                if qa_scores:
+                    qa_report = render_qa_report(qa_scores, course_name=course_name)
+                    qa_ok = qa_passed(qa_scores)
+                    if verbose:
+                        passed = sum(1 for s in qa_scores if s.verdict == "pass")
+                        print(
+                            f"  🧠  System One QA scored {len(qa_scores)} artifact(s): "
+                            f"{passed} passed."
+                        )
+            except SystemOneError as exc:
+                if verbose:
+                    print(f"  [System One] QA scoring unavailable: {exc}", file=sys.stderr)
+                qa_scores = []
+
+    deterministic_qa_complete = bool(qa_scores) and qa_ok
+
     # QA runs when either labs or theory were generated (or both).
     # Skip only if explicitly disabled or nothing was produced.
     if skip_qa or (not labs_ok and not theory_ok):
         qa_ok = True  # Nothing to review, or explicitly skipped.
     elif abort_guard.should_skip("QA review"):
         qa_error = abort_guard.reason
+    elif deterministic_qa_complete:
+        # Fast path: every artifact passed the typed rubric, so no generative
+        # review or delegation is required.
+        if verbose:
+            print(
+                f"  ✅  QA Review completed deterministically "
+                f"({len(qa_scores)} artifact(s) passed)."
+            )
     elif lab_dev is not None or theory_instructor is not None:
         # The QA Reviewer is a singleton (get_qa_reviewer) and the Lab
         # Developer / Theory Instructor objects are reused across the run, so
@@ -2048,6 +2224,7 @@ def run_syllabus_crew(
                 theory_instructor_role=(
                     theory_instructor.role if theory_instructor is not None else None
                 ),
+                qa_scores=qa_scores,
                 verbose=verbose,
             )
             return Crew(
@@ -2068,7 +2245,8 @@ def run_syllabus_crew(
             qa_report = (qa_result.raw if hasattr(qa_result, "raw") else str(qa_result)).strip()
 
             if qa_report:
-                qa_ok = True
+                # The deterministic scores are authoritative when present.
+                qa_ok = qa_passed(qa_scores) if qa_scores else True
                 if verbose:
                     print("  ✅  QA Review completed.")
 

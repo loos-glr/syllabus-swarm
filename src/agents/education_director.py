@@ -14,6 +14,15 @@ The agent obtains its LLM through
 ``EDUCATION_DIRECTOR`` role, so model selection, temperature, and
 other generation parameters are configured in one place
 (:mod:`src.llm_factory`) following the project-wide per-agent fallback chain.
+
+.. rubric:: Deterministic decision layer (System One)
+
+The advance/rewrite verdict is **no longer** an LLM judgment.  Syllabus
+completeness is decided by the non-generative System One gate
+(:mod:`src.evaluators.syllabus_gate`), and that verdict is authoritative.
+When the gate result is supplied to the task, this agent's remaining
+responsibilities are purely non-decisional: articulating the blockers and
+delegating a targeted rewrite to the Curriculum Architect.
 """
 
 from __future__ import annotations

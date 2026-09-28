@@ -13,6 +13,8 @@ from unittest.mock import MagicMock, patch
 import pytest
 from crewai import LLM
 
+from src.system_one import FakeSystemOneClient
+
 # ---------------------------------------------------------------------------
 # Mock LLM — a MagicMock spec'd to crewai.LLM so tests never hit the network
 # ---------------------------------------------------------------------------
@@ -50,6 +52,45 @@ def mock_llm_factory(mock_llm: MagicMock) -> MagicMock:
     """
     with patch("src.llm_factory.build_llm_for_agent", return_value=mock_llm) as mock_build:
         yield mock_build
+
+
+# ---------------------------------------------------------------------------
+# System One (Jev) — deterministic decision-layer fixtures
+# ---------------------------------------------------------------------------
+
+
+@pytest.fixture
+def fake_system_one() -> FakeSystemOneClient:
+    """Return a network-free System One client.
+
+    In heuristic mode every un-scripted question is answered with
+    ``confidence == 0.0`` (and ``noul`` at 0.5), so evaluators escalate rather
+    than silently approving.  Script specific answers via ``client.answers``
+    or by constructing the client directly in the test.
+    """
+    return FakeSystemOneClient()
+
+
+@pytest.fixture
+def patch_system_one(fake_system_one: FakeSystemOneClient) -> MagicMock:
+    """Patch every ``build_system_one_client`` entry point to return *fake_system_one*.
+
+    Both the factory (used by the lazy evaluator singletons) and the module-level
+    binding inside ``src.crews.syllabus_crew`` are patched so tests can exercise
+    the orchestrator's deterministic paths without a live API key.  The yielded
+    mock is the orchestrator-facing patch, which is the one callers can assert on.
+    """
+    import src.crews.syllabus_crew as syllabus_crew  # noqa: PLC0415
+
+    with (
+        patch("src.llm_factory.build_system_one_client", return_value=fake_system_one),
+        patch.object(
+            syllabus_crew,
+            "build_system_one_client",
+            return_value=fake_system_one,
+        ) as orchestrator_patch,
+    ):
+        yield orchestrator_patch
 
 
 # ---------------------------------------------------------------------------

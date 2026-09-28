@@ -25,7 +25,11 @@ theory files) with specific, actionable feedback.
 
 from __future__ import annotations
 
+from collections.abc import Sequence
+
 from crewai import Agent, Task
+
+from src.models import QAScore
 
 
 def create_qa_review_task(
@@ -36,6 +40,7 @@ def create_qa_review_task(
     lab_developer_role: str | None = None,
     theory_instructor_role: str | None = None,
     material_language: str = "Dutch",
+    qa_scores: Sequence[QAScore] | None = None,
     verbose: bool = False,
 ) -> Task:
     """Create a CrewAI Task that performs QA review of generated lab and theory files.
@@ -281,8 +286,26 @@ def create_qa_review_task(
         f"for MBO4 students.  Ready for classroom use.**'\n"
     )
 
+    # ── Inject the deterministic System One verdict (when available) ───
+    # The typed scores are authoritative: the agent must NOT re-judge, only
+    # format the report and delegate fixes for artifacts flagged below.
+    if qa_scores:
+        from src.evaluators.qa_scorer import render_qa_report  # noqa: PLC0415
+
+        description = (
+            "## 🧠 Deterministic QA verdict (System One — AUTHORITATIVE)\n\n"
+            "The following typed rubric scores were produced by the non-generative "
+            "System One model.  Treat them as FINAL.  Do NOT re-assess correctness "
+            "or didactics yourself — your job is to (1) format this into the report "
+            "structure below and (2) delegate a fix to the responsible agent for "
+            "every artifact whose verdict is `needs_fixes`.\n\n"
+            "```markdown\n"
+            + render_qa_report(qa_scores, course_name=course_name)
+            + "```\n\n---\n\n"
+            + description
+        )
+
     expected_output = (
-        "A comprehensive Markdown QA Report with Technical Correctness "
         "Check results for lab code, Didactic & Clarity Check results for "
         "lab code, Theory Artifact Review results for theory/ files, a "
         "Delegation Summary (if any fixes were delegated to the Lab "

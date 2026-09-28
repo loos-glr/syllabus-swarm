@@ -18,6 +18,15 @@ The agent obtains its LLM through
 role, so model selection, temperature, and other generation parameters are
 configured in one place (:mod:`src.llm_factory`) following the project-wide
 per-agent fallback chain.
+
+.. rubric:: Deterministic decision layer (System One)
+
+The pass/fail verdict is **no longer** an LLM judgment.  Content is scored
+against a typed rubric by the non-generative System One model
+(:mod:`src.evaluators.qa_scorer`), and that score is authoritative.  When
+those scores are supplied to the task, this agent's remaining responsibilities
+are purely non-decisional: formatting the QA report and delegating fixes for
+artifacts flagged ``needs_fixes``.
 """
 
 from __future__ import annotations
