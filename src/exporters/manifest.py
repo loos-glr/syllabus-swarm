@@ -109,7 +109,7 @@ def _scan_directory(base: Path) -> list[ArtifactSummary]:
         return result
 
     for entry in sorted(base.iterdir()):
-        if entry.name.startswith("."):
+        if entry.name.startswith((".", "_")):
             continue
         if entry.is_dir():
             count = 0
@@ -166,7 +166,7 @@ def _build_tree(
 
     if path.is_dir():
         entries = sorted(
-            [e for e in path.iterdir() if not e.name.startswith(".")],
+            [e for e in path.iterdir() if not e.name.startswith((".", "_"))],
             key=lambda e: (not e.is_dir(), e.name),
         )
         for i, entry in enumerate(entries):
@@ -187,7 +187,7 @@ def _build_tree_children(path: Path, prefix: str = "") -> list[str]:
         return lines
 
     entries = sorted(
-        [e for e in path.iterdir() if not e.name.startswith(".")],
+        [e for e in path.iterdir() if not e.name.startswith((".", "_"))],
         key=lambda e: (not e.is_dir(), e.name),
     )
     for i, entry in enumerate(entries):
@@ -205,7 +205,7 @@ def _render_subtree(node: Path, prefix: str, is_last: bool) -> list[str]:
     if node.is_dir():
         lines.append(f"{prefix}{connector}{node.name}/")
         children = sorted(
-            [e for e in node.iterdir() if not e.name.startswith(".")],
+            [e for e in node.iterdir() if not e.name.startswith((".", "_"))],
             key=lambda e: (not e.is_dir(), e.name),
         )
         for j, child in enumerate(children):
@@ -268,7 +268,7 @@ def update_output_manifest(
 
     if output_dir.exists():
         for run_dir in sorted(output_dir.iterdir()):
-            if not run_dir.is_dir() or run_dir.name.startswith("."):
+            if not run_dir.is_dir() or run_dir.name.startswith((".", "_")):
                 continue
             if run_dir.name == "README.md":
                 continue
