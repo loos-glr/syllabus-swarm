@@ -48,6 +48,88 @@ class FileWriteError(Exception):
 
 
 # ---------------------------------------------------------------------------
+# Canonical tier taxonomy — the ONE valid spelling for each lab tier directory
+# ---------------------------------------------------------------------------
+# Past runs drifted into inconsistent spellings (``tier_1_—_foundations``,
+# ``tier_2___application``, ``Tier 1 — Foundations`` …) which scattered the
+# same logical tier across several directories.  Everything that needs a tier
+# directory name must funnel through :func:`canonical_tier` so the layout stays
+# deterministic.
+
+CANONICAL_TIERS: tuple[str, ...] = (
+    "tier1_foundations",
+    "tier2_application",
+    "tier3_architecture",
+)
+
+# Maps a canonical tier to its human-facing label (used in prompts/summaries).
+_TIER_LABELS: dict[str, str] = {
+    "tier1_foundations": "Tier 1 — Foundations",
+    "tier2_application": "Tier 2 — Application",
+    "tier3_architecture": "Tier 3 — Architecture",
+}
+
+
+def canonical_tier(value: str | None) -> str | None:
+    """Normalise *value* to a canonical tier directory name.
+
+    Accepts any of the spellings that have appeared in generated material —
+    the canonical form (``tier1_foundations``), the human label
+    (``Tier 1 — Foundations``), or separator variants
+    (``tier_1_foundations``, ``tier 1 foundations``, ``tier2`` …).
+
+    Parameters
+    ----------
+    value : str or None
+        The raw tier identifier supplied by a caller or an LLM.
+
+    Returns
+    -------
+    str or None
+        The canonical directory name (one of :data:`CANONICAL_TIERS`), or
+        ``None`` when *value* does not identify a known tier.
+    """
+    if not value:
+        return None
+
+    raw = str(value).strip().lower()
+
+    # 1. Direct hit on the canonical form (or a trailing slash variant).
+    trimmed = raw.rstrip("/\\").strip()
+    if trimmed in CANONICAL_TIERS:
+        return trimmed
+
+    # 2. Normalise every separator (space, slash, hyphen, en/em dash) to a
+    #    single space, then match against the human-label forms.
+    collapsed = trimmed.replace("\u2014", " ").replace("\u2013", " ")
+    collapsed = re.sub(r"[\s/_-]+", " ", collapsed).strip()
+
+    for tier in CANONICAL_TIERS:
+        num = tier[4]  # "1" | "2" | "3"
+        kind = tier.split("_", 1)[1]  # "foundations" | "application" | ...
+        if collapsed in (
+            f"tier {num} {kind}",
+            f"tier {num}",
+            f"tier{num}",
+        ):
+            return tier
+
+    return None
+
+
+def tier_label(value: str | None) -> str:
+    """Return the human-facing label for a canonical tier.
+
+    Falls back to *value* unchanged when it is not a recognised tier so the
+    helper is always safe to call.
+    """
+    canonical = canonical_tier(value)
+    if canonical is None:
+        return str(value or "")
+    return _TIER_LABELS[canonical]
+
+
+# ---------------------------------------------------------------------------
 # Sanitiser — convert arbitrary strings into safe filesystem names
 # ---------------------------------------------------------------------------
 
