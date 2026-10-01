@@ -520,3 +520,110 @@ class TestCreateSyllabusReviewTask:
         """The expected_output references a Delegation Summary."""
         kwargs = self._call_factory(course_name="Test Course")
         assert "Delegation Summary" in kwargs["expected_output"]
+
+
+# ===================================================================
+# Theory / lesson-plan / presentation tasks — enforced write commands
+# ===================================================================
+
+
+class TestTheoryTaskUsesWriteTheoryCommand:
+    """The theory task must mandate the validated 'write-theory' command."""
+
+    @pytest.fixture(autouse=True)
+    def _patch_task(self) -> None:
+        with patch("src.tasks.theory_generation.Task") as self.mock_task:
+            yield
+
+    def _call_factory(self, **overrides) -> dict:
+        from src.tasks.theory_generation import create_theory_task
+
+        kwargs: dict = {
+            "agent": MagicMock(),
+            "course_name": "Javascript OOP",
+            "run_id": "2026-08-23_120000_Javascript_OOP",
+            "tier": "tier1_foundations",
+        }
+        kwargs.update(overrides)
+        create_theory_task(**kwargs)
+        return self.mock_task.call_args.kwargs
+
+    def test_expected_output_uses_write_theory(self) -> None:
+        kwargs = self._call_factory()
+        assert "write-theory" in kwargs["expected_output"]
+
+    def test_no_directory_tree_reference(self) -> None:
+        kwargs = self._call_factory()
+        assert "write-directory-tree" not in kwargs["expected_output"]
+        assert "write-directory-tree" not in kwargs["description"]
+
+
+class TestLessonPlanTaskUsesWriteLessonPlanCommand:
+    """The lesson-plan task must mandate the validated command + canonical dir."""
+
+    @pytest.fixture(autouse=True)
+    def _patch_task(self) -> None:
+        with patch("src.tasks.lesson_plan_generation.Task") as self.mock_task:
+            yield
+
+    def _call_factory(self, **overrides) -> dict:
+        from src.tasks.lesson_plan_generation import create_lesson_plan_task
+
+        kwargs: dict = {
+            "agent": MagicMock(),
+            "course_name": "WebXR",
+            "run_id": "2026-09-29_053658_WebXR",
+            "module_name": "Tier 1 — Foundations",
+            "syllabus_context": "# Syllabus\n\nSome syllabus content.",
+        }
+        kwargs.update(overrides)
+        create_lesson_plan_task(**kwargs)
+        return self.mock_task.call_args.kwargs
+
+    def test_expected_output_uses_write_lesson_plan(self) -> None:
+        kwargs = self._call_factory()
+        assert "write-lesson-plan" in kwargs["expected_output"]
+
+    def test_human_label_maps_to_canonical_dir(self) -> None:
+        kwargs = self._call_factory(module_name="Tier 1 — Foundations")
+        assert "tier1_foundations" in kwargs["expected_output"]
+        assert "tier1_foundations" in kwargs["output_file"]
+
+    def test_no_directory_tree_reference(self) -> None:
+        kwargs = self._call_factory()
+        assert "write-directory-tree" not in kwargs["description"]
+
+
+class TestPresentationTaskUsesWritePresentationCommand:
+    """The presentation task must mandate 'write-presentation' + canonical dir."""
+
+    @pytest.fixture(autouse=True)
+    def _patch_task(self) -> None:
+        with patch("src.tasks.presentation_generation.Task") as self.mock_task:
+            yield
+
+    def _call_factory(self, **overrides) -> dict:
+        from src.tasks.presentation_generation import create_presentation_task
+
+        kwargs: dict = {
+            "agent": MagicMock(),
+            "course_name": "WebXR",
+            "run_id": "2026-09-29_053658_WebXR",
+            "module_name": "Tier 2 — Application",
+            "syllabus_context": "# Syllabus\n\nSome syllabus content.",
+        }
+        kwargs.update(overrides)
+        create_presentation_task(**kwargs)
+        return self.mock_task.call_args.kwargs
+
+    def test_expected_output_uses_write_presentation(self) -> None:
+        kwargs = self._call_factory()
+        assert "write-presentation" in kwargs["expected_output"]
+
+    def test_human_label_maps_to_canonical_dir(self) -> None:
+        kwargs = self._call_factory(module_name="Tier 2 — Application")
+        assert "tier2_application" in kwargs["expected_output"]
+
+    def test_no_directory_tree_reference(self) -> None:
+        kwargs = self._call_factory()
+        assert "write-directory-tree" not in kwargs["description"]

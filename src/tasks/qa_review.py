@@ -242,7 +242,8 @@ def create_qa_review_task(
         f"When you delegate a fix, you **MUST** instruct the coworker to use "
         f"the **exact** `run_id` shown in the Labs Directory path above "
         f'(e.g., `run_id="{run_id or "RUN_ID"}"`).  The coworker MUST use this '
-        f"`run_id` in ALL `write-labs` and `write-directory-tree` tool calls.\n\n"
+        f"`run_id` in ALL `write-labs`, `write-theory`, `write-lesson-plan`, "
+        f"and `write-presentation` tool calls.\n\n"
         f"❌ **WRONG:** using a made-up run_id like "
         f'`run_id="2023-06-15_120000_Some_Random_Name"`\n'
         f'✅ **CORRECT:** `run_id="{run_id or "RUN_ID"}"` '

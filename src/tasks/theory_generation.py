@@ -14,8 +14,8 @@ syllabus.  The task specification:
   • Writes artifacts into a ``theory/`` subfolder inside each tier's
     lab directory (e.g. ``output/<run_id>/labs/<course>/tier1_foundations/theory/``),
     keeping theory and starter code bundled together for the student.
-  • Uses the ``output_export_tool`` with ``command="write-directory-tree"``
-    to persist files to disk.
+  • Uses the ``output_export_tool`` with ``command="write-theory"``
+    to persist files to disk into the canonical tier ``theory/`` folder.
 """
 
 from __future__ import annotations
@@ -159,37 +159,37 @@ _ARTIFACT_REQUIREMENTS: str = (
 _TOOL_USAGE_MANDATE: str = (
     "## 🔴 MANDATORY — Use the `output_export_tool` to Write Files\n\n"
     "You have access to the **`output_export_tool`**.  You MUST use the "
-    "`write-directory-tree` command to write your theory artifacts to disk.\n\n"
+    "`write-theory` command to save your theory artifacts.  The tool decides "
+    "the on-disk location — you only supply the artifact content, the "
+    "``tier``, and the ``run_id``.\n\n"
     "**Workflow:**\n"
     "1. Read the ``run_id`` and ``course_name`` from the context provided "
     "at the start of this task description (look for ``**Run ID:**`` and "
-    "``**Course Name:**``).  You MUST include these in EVERY tool call.\n"
-    "2. Generate the theory artifact for **Tier 1** first.  Call "
-    '`output_export_tool` with `command="write-directory-tree"`, passing '
-    "`base_path` and `files` (a dict mapping relative paths to file contents).\n"
-    "3. After Tier 1 files are written, move to **Tier 2** and repeat.\n"
-    "4. After Tier 2, move to **Tier 3** and repeat.\n"
-    "5. Once ALL files for ALL tiers are successfully written to disk, "
-    "produce your final textual response: a Markdown summary listing each "
-    "tier, the format chosen, the filename, and a one-line description of "
-    "the artifact.\n\n"
-    "**Base path for each tier:**\n"
-    "```\n"
-    "output/<run_id>/labs/<tier>/theory/\n"
-    "```\n\n"
-    "**Example tool call for Tier 1 (you MUST follow this exact structure):**\n"
+    "``**Course Name:**``).  You MUST pass this exact ``run_id`` in EVERY "
+    "tool call.\n"
+    "2. Generate the theory artifact for the tier named in this task.  Call "
+    '`output_export_tool` with `command="write-theory"`, passing `run_id`, '
+    "`tier` (the canonical tier directory name, e.g. ``tier1_foundations``), "
+    "and `files` (a dict mapping relative filenames to file contents).\n"
+    "3. Once the file(s) are successfully written to disk, produce your final "
+    "textual response: a Markdown summary listing the tier, the format "
+    "chosen, the filename, and a one-line description of the artifact.\n\n"
+    "**Example tool call (you MUST follow this exact structure):**\n"
     "```json\n"
-    "{{\n"
-    '  "command": "write-directory-tree",\n'
-    '  "base_path": "output/2026-08-23_120000_Javascript_OOP/labs/tier1_foundations/theory",\n'
-    '  "files": {{\n'
+    "{\n"
+    '  "command": "write-theory",\n'
+    '  "run_id": "2026-08-23_120000_Javascript_OOP",\n'
+    '  "tier": "tier1_foundations",\n'
+    '  "files": {\n'
     '    "sorting_visualizer.html": "<!DOCTYPE html>\\n<html lang=\\"en\\">\\n..."\n'
-    "  }}\n"
-    "}}\n"
+    "  }\n"
+    "}\n"
     "```\n\n"
-    "**Do NOT** attempt to write all file contents inline in your final "
-    "text response.  Use the tool for every file.  Your final text response "
-    "must be a real summary of what was generated — NOT a placeholder.\n"
+    "**Do NOT** construct file paths yourself — the tool enforces the "
+    "canonical `output/<run_id>/labs/<tier>/theory/` location and will reject "
+    "anything else.  **Do NOT** attempt to write all file contents inline in "
+    "your final text response.  Use the tool for every file.  Your final text "
+    "response must be a real summary of what was generated — NOT a placeholder.\n"
 )
 
 # ---------------------------------------------------------------------------
@@ -223,8 +223,7 @@ def create_theory_task(
     run_id : str or None
         The unique run identifier (e.g. ``"2026-08-23_120000_Course_Name"``).
         When provided, it is injected into the task description so the agent
-        can construct the correct ``base_path`` for ``write-directory-tree``
-        tool calls.
+        passes the correct ``run_id`` on every ``write-theory`` tool call.
     tier : str or None
         When set to a specific tier directory name (e.g. ``"tier1_foundations"``),
         the task generates theory for that ONE tier only.  Used during
@@ -304,8 +303,7 @@ def create_theory_task(
     if run_id:
         description_parts.append(
             f"\n**Run ID:** {run_id}\n"
-            f"(MUST use this ``run_id`` to construct the ``base_path`` for "
-            f"every `write-directory-tree` tool call)\n"
+            f"(pass this exact ``run_id`` to every `write-theory` tool call)\n"
         )
 
     if syllabus_context:
@@ -389,10 +387,11 @@ def create_theory_task(
     if tier:
         expected_output = (
             "## 🔴 CRITICAL: You MUST use the `output_export_tool`\n\n"
-            'Use the `output_export_tool` with `command="write-directory-tree"` '
-            "to write your theory artifact to disk.  Write exactly ONE artifact "
-            f"for **{tier_label}** into the `theory/` subfolder:\n\n"
-            f"- `output/<run_id>/labs/{tier}/theory/`\n\n"
+            'Use the `output_export_tool` with `command="write-theory"` '
+            "to write your theory artifact.  Pass `run_id`, "
+            f'`tier="{tier}"` and a `files` dict.  Write exactly ONE artifact '
+            f"for **{tier_label}**:\n\n"
+            f"- `command=\"write-theory\"`, `tier=\"{tier}\"`\n\n"
             "**Once the file is written**, produce a Markdown summary listing "
             "the tier, the format chosen (A/B/C), the filename, and a one-line "
             "description of the artifact.\n"
@@ -400,12 +399,12 @@ def create_theory_task(
     else:
         expected_output = (
             "## 🔴 CRITICAL: You MUST use the `output_export_tool`\n\n"
-            'Use the `output_export_tool` with `command="write-directory-tree"` '
-            "to write ALL theory artifacts to disk.  Write exactly ONE artifact "
-            "per tier into the `theory/` subfolder of each tier's lab directory:\n\n"
-            "- `output/<run_id>/labs/tier1_foundations/theory/`\n"
-            "- `output/<run_id>/labs/tier2_application/theory/`\n"
-            "- `output/<run_id>/labs/tier3_architecture/theory/`\n\n"
+            'For EACH tier, call the `output_export_tool` with '
+            '`command="write-theory"`, passing `run_id`, the canonical `tier`, '
+            "and a `files` dict.  Write exactly ONE artifact per tier:\n\n"
+            '- `command="write-theory"`, `tier="tier1_foundations"`\n'
+            '- `command="write-theory"`, `tier="tier2_application"`\n'
+            '- `command="write-theory"`, `tier="tier3_architecture"`\n\n'
             "**Once all files are written**, produce a Markdown summary listing "
             "each tier, the format chosen (A/B/C), the filename, and a one-line "
             "description of the artifact.\n"

@@ -14,6 +14,7 @@ from __future__ import annotations
 
 from crewai import Agent, Task
 
+from src.exporters.file_writer import canonical_tier
 from src.exporters.glr_marp_theme import generate_marp_css
 
 _PRESENTATION_STRUCTURE: str = (
@@ -70,9 +71,13 @@ _PRESENTATION_STRUCTURE: str = (
 
 _TOOL_USAGE_MANDATE: str = (
     "## 🔴  CRITICAL: Tool Usage Requirement\n\n"
-    'You MUST use the `output_export_tool` with `command="write-directory-tree"` '
-    "to write the presentation to disk:\n"
-    "- `output/<run_id>/presentations/<module>/presentation.md`\n\n"
+    'You MUST use the `output_export_tool` with `command="write-presentation"` '
+    "to write the presentation.  The tool decides the destination — you supply "
+    "the `course_name`, the `module_name`, the `run_id`, and the complete Marp "
+    "Markdown as `content`.\n\n"
+    "Do NOT construct file paths yourself; the tool writes to the canonical "
+    "`output/<run_id>/presentations/<module>/presentation.md` location and will "
+    "reject anything else.\n\n"
     "After writing the file, produce a brief Markdown summary.\n"
 )
 
@@ -178,17 +183,28 @@ def create_presentation_task(
             f"while maintaining all other requirements.\n"
         )
 
-    safe_module = module_name.replace(" ", "_").replace("-", "_").lower() if module_name else "module"
+    # Normalise the module to a canonical tier directory name when it
+    # identifies a tier; fall back to a sanitised slug otherwise.
+    if module_name:
+        safe_module = canonical_tier(module_name) or (
+            module_name.replace(" ", "_").replace("-", "_").lower()
+        )
+    else:
+        safe_module = "module"
+
     out_prefix = (
         f"output/{run_id}/presentations/{safe_module}"
         if run_id else f"output/presentations/{safe_module}"
     )
 
+    run_id_hint = run_id or "<run_id-from-context>"
     expected_output = (
         "## 🔴 CRITICAL: You MUST use the `output_export_tool`\n\n"
-        'Use the `output_export_tool` with `command="write-directory-tree"` '
-        "to write the presentation to disk:\n\n"
-        f"- `{out_prefix}/presentation.md`\n\n"
+        'Call the `output_export_tool` with `command="write-presentation"` '
+        "to write the presentation:\n\n"
+        f'- `command="write-presentation"`, `course_name="{course_name}"`, '
+        f'`module_name="{safe_module}"`, `run_id="{run_id_hint}"`, '
+        "and `content` = the complete Marp Markdown.\n\n"
         "**Once the file is written**, produce a Markdown summary listing "
         "the module name, number of slides, slide types per Gagné event, "
         "and a self-audit confirming all 6 items of the 30-second checklist "

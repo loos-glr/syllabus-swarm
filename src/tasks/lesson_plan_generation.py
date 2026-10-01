@@ -10,6 +10,8 @@ from __future__ import annotations
 
 from crewai import Agent, Task
 
+from src.exporters.file_writer import canonical_tier
+
 _LESSON_PLAN_STRUCTURE: str = (
     "## 📐  Lesson Plan Structure Requirements\n\n"
     "Each lesson plan must follow this exact structure:\n\n"
@@ -35,10 +37,13 @@ _LESSON_PLAN_STRUCTURE: str = (
 
 _TOOL_USAGE_MANDATE: str = (
     "## 🔴  CRITICAL: Tool Usage Requirement\n\n"
-    'You MUST use the `output_export_tool` with `command="write-directory-tree"` '
-    "to write the lesson plan to disk.\n\n"
-    "Write exactly ONE Markdown file:\n"
-    "- `output/<run_id>/lesson_plans/<module>/lesson_plan.md`\n\n"
+    'You MUST use the `output_export_tool` with `command="write-lesson-plan"` '
+    "to write the lesson plan.  The tool decides the destination — you supply "
+    "the `course_name`, the `module_name`, the `run_id`, and the complete "
+    "lesson plan Markdown as `content`.\n\n"
+    "Do NOT construct file paths yourself; the tool writes to the canonical "
+    "`output/<run_id>/lesson_plans/<module>/lesson_plan.md` location and will "
+    "reject anything else.\n\n"
     "After writing the file, produce a brief Markdown summary.\n"
 )
 def create_lesson_plan_task(
@@ -97,17 +102,29 @@ def create_lesson_plan_task(
             f"while maintaining all other requirements.\n"
         )
 
-    safe_module = module_name.replace(" ", "_").replace("-", "_").lower() if module_name else "module"
+    # Normalise the module to a canonical tier directory name when it
+    # identifies a tier (e.g. "Tier 1 — Foundations" -> "tier1_foundations");
+    # fall back to a sanitised slug for genuinely non-tier modules.
+    if module_name:
+        safe_module = canonical_tier(module_name) or (
+            module_name.replace(" ", "_").replace("-", "_").lower()
+        )
+    else:
+        safe_module = "module"
+
     out_prefix = (
         f"output/{run_id}/lesson_plans/{safe_module}"
         if run_id else f"output/lesson_plans/{safe_module}"
     )
 
+    run_id_hint = run_id or "<run_id-from-context>"
     expected_output = (
         "## 🔴 CRITICAL: You MUST use the `output_export_tool`\n\n"
-        'Use the `output_export_tool` with `command="write-directory-tree"` '
-        "to write the lesson plan to disk:\n\n"
-        f"- `{out_prefix}/lesson_plan.md`\n\n"
+        'Call the `output_export_tool` with `command="write-lesson-plan"` '
+        "to write the lesson plan:\n\n"
+        f'- `command="write-lesson-plan"`, `course_name="{course_name}"`, '
+        f'`module_name="{safe_module}"`, `run_id="{run_id_hint}"`, '
+        "and `content` = the complete lesson plan Markdown.\n\n"
         "**Once the file is written**, produce a Markdown summary listing "
         "the module name, number of sessions, and total duration.\n"
     )
