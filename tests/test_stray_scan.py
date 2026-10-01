@@ -25,6 +25,7 @@ import src.crews.syllabus_crew as sc_module
 from src.crews.syllabus_crew import (
     _OUTPUT_ROOT_IGNORED_FILES,
     _OUTPUT_ROOT_SAFE_FILES,
+    _quarantine_stray_generated_files,
     _scan_for_stray_generated_files,
 )
 
@@ -253,3 +254,99 @@ class TestStrayDetection:
         captured = capsys.readouterr()
         assert warnings_list
         assert captured.err == ""
+
+
+# ===================================================================
+# Active correction — quarantine (or delete) strays
+# ===================================================================
+
+
+class TestQuarantineStrayGeneratedFiles:
+    """``_quarantine_stray_generated_files`` actively cleans the output root."""
+
+    def test_moves_loose_file_into_quarantine(self, output_root: Path) -> None:
+        """A loose file at the output root is moved under output/_stray/."""
+        (output_root / _RUN_ID).mkdir()
+        stray = output_root / "presentatie-beroeps2.md"
+        stray.write_text("# stray\n", encoding="utf-8")
+
+        actions = _quarantine_stray_generated_files(run_id=_RUN_ID)
+
+        assert actions, "expected a corrective action"
+        assert not stray.exists()
+        moved = list((output_root / "_stray" / _RUN_ID).rglob("presentatie-beroeps2.md"))
+        assert len(moved) == 1
+
+    def test_moves_stray_directory(self, output_root: Path) -> None:
+        """A stray directory (e.g. lesson_plans/) is quarantined."""
+        (output_root / _RUN_ID).mkdir()
+        stray_dir = output_root / "lesson_plans"
+        stray_dir.mkdir()
+        (stray_dir / "x.md").write_text("x", encoding="utf-8")
+
+        actions = _quarantine_stray_generated_files(run_id=_RUN_ID)
+
+        assert actions
+        assert not stray_dir.exists()
+        assert (output_root / "_stray" / _RUN_ID).exists()
+
+    def test_catches_corrupted_run_dir(self, output_root: Path) -> None:
+        """A run dir with a corrupted date prefix is treated as a stray."""
+        (output_root / _RUN_ID).mkdir()
+        typo = output_root / "202-09-28_214410_WebXR_Introductie"
+        typo.mkdir()
+        (typo / "x.md").write_text("x", encoding="utf-8")
+
+        actions = _quarantine_stray_generated_files(run_id=_RUN_ID)
+
+        assert any("202-09-28" in a for a in actions)
+        assert not typo.exists()
+
+    def test_leaves_other_run_directories(self, output_root: Path) -> None:
+        """Legitimate previous run directories are never touched."""
+        (output_root / _RUN_ID).mkdir()
+        other = output_root / "2026-09-01_120000_Other_Course"
+        other.mkdir()
+        (other / "keep.md").write_text("keep", encoding="utf-8")
+
+        actions = _quarantine_stray_generated_files(run_id=_RUN_ID)
+
+        assert actions == []
+        assert (other / "keep.md").exists()
+
+    def test_leaves_safe_files_and_os_artifacts(self, output_root: Path) -> None:
+        """Safe manifest files and OS artefacts are never quarantined."""
+        (output_root / _RUN_ID).mkdir()
+        (output_root / "README.md").write_text("# manifest\n", encoding="utf-8")
+        (output_root / "course_graph.json").write_text("{}", encoding="utf-8")
+        (output_root / ".DS_Store").write_bytes(b"\x00")
+
+        actions = _quarantine_stray_generated_files(run_id=_RUN_ID)
+
+        assert actions == []
+        assert (output_root / "README.md").exists()
+        assert (output_root / "course_graph.json").exists()
+        assert (output_root / ".DS_Store").exists()
+
+    def test_delete_mode_removes_strays(self, output_root: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+        """With SYLLABUS_SWARM_STRAYS=delete, strays are removed outright."""
+        monkeypatch.setenv("SYLLABUS_SWARM_STRAYS", "delete")
+        (output_root / _RUN_ID).mkdir()
+        stray = output_root / "orphan.md"
+        stray.write_text("x", encoding="utf-8")
+
+        actions = _quarantine_stray_generated_files(run_id=_RUN_ID)
+
+        assert actions
+        assert not stray.exists()
+        assert not (output_root / "_stray").exists()
+
+    def test_clean_output_root_yields_no_actions(self, output_root: Path) -> None:
+        """A run directory in the right place produces no corrective actions."""
+        (output_root / _RUN_ID).mkdir()
+        assert _quarantine_stray_generated_files(run_id=_RUN_ID) == []
+
+    def test_missing_output_root_is_noop(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+        """A not-yet-created output/ directory is a no-op."""
+        monkeypatch.setattr(sc_module, "OUTPUT_ROOT", tmp_path / "nope")
+        assert _quarantine_stray_generated_files(run_id=_RUN_ID) == []

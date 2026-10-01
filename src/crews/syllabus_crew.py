@@ -23,6 +23,7 @@ from __future__ import annotations
 
 import os
 import re
+import shutil
 import sys
 import time
 from collections.abc import Callable
@@ -870,12 +871,145 @@ def _scan_for_stray_generated_files(
     return warnings_list
 
 
+def _bind_run_id(agent: Agent | None, run_id: str) -> None:
+    """Bind the active run id to *agent*'s ``output_export_tool``.
+
+    Delegated agents are reused singletons; binding the current run id to
+    their export tool is what lets :class:`OutputExportTool` reject a wrong or
+    invented ``run_id`` and confine every write to the active run directory.
+    """
+    if agent is None:
+        return
+    for tool in getattr(agent, "tools", None) or []:
+        if getattr(tool, "name", "") == "output_export_tool" and hasattr(tool, "bind_run_id"):
+            try:
+                tool.bind_run_id(run_id)
+            except Exception:  # pragma: no cover - defensive
+                pass
+
+
+# Pattern matching a legitimate run directory name produced by
+# ``generate_run_id()`` (``YYYY-MM-DD_HHMMSS_<slug>``).  Immediate children of
+# ``output/`` that match are treated as previous runs and left untouched.
+_RUN_DIR_RE: re.Pattern[str] = re.compile(r"^\d{4}-\d{2}-\d{2}_\d{6}_")
+
+# Environment switch controlling stray handling.  ``quarantine`` (default)
+# moves strays into ``output/_stray/``; ``delete`` removes them outright.
+_STRAY_MODE_ENV: str = "SYLLABUS_SWARM_STRAYS"
+
+
+def _quarantine_stray_generated_files(
+    *,
+    run_id: str,
+    verbose: bool = False,
+) -> list[str]:
+    """Actively correct stray artefacts written into the ``output/`` root.
+
+    Unlike :func:`_scan_for_stray_generated_files` (which only reports), this
+    function *fixes* the problem.  Any immediate child of ``output/`` that is
+    not the active run, a known-safe file, an OS artefact, an internal
+    (underscore/dot-prefixed) entry, or another run directory is **moved**
+    into ``output/_stray/<run_id>/<timestamp>/`` so the output root stays
+    clean.  When the move fails the stray is deleted as a last resort.
+
+    The handling mode is controlled by the ``SYLLABUS_SWARM_STRAYS`` env var
+    (``quarantine`` — default; ``delete`` — remove instead of move).
+
+    Returns
+    -------
+    list[str]
+        Human-readable descriptions of the corrective actions taken
+        (empty when the output root was already clean).
+    """
+    actions: list[str] = []
+    output_root = OUTPUT_ROOT
+    if not output_root.is_dir():
+        return actions
+
+    mode = os.environ.get(_STRAY_MODE_ENV, "quarantine").strip().lower()
+    quarantine_root = output_root / "_stray" / run_id
+    timestamp = datetime.now(UTC).strftime("%Y%m%d_%H%M%S")
+
+    for entry in sorted(output_root.iterdir()):
+        name = entry.name
+
+        # 1. The active run directory is exactly where artefacts belong.
+        if name == run_id:
+            continue
+        # 2. Files that legitimately live directly under output/.
+        if name in _OUTPUT_ROOT_SAFE_FILES:
+            continue
+        # 3. OS / editor artefacts.
+        if name in _OUTPUT_ROOT_IGNORED_FILES:
+            continue
+        # 4. Internal pipeline entries (e.g. ``_stray``, ``_generation_state``).
+        if name.startswith("_") or name.startswith("."):
+            continue
+        # 5. Other legitimate run directories (previous runs).
+        if _RUN_DIR_RE.match(name):
+            continue
+
+        # Anything else is a stray — forcibly remove it from the output root.
+        if mode == "delete":
+            try:
+                if entry.is_dir():
+                    shutil.rmtree(entry)
+                else:
+                    entry.unlink()
+                actions.append(f"deleted stray '{entry}'")
+                if verbose:
+                    print(f"  🧹  Deleted stray: {entry}", file=sys.stderr)
+            except Exception as exc:  # pragma: no cover - filesystem dependent
+                actions.append(f"FAILED to delete stray '{entry}': {exc}")
+                if verbose:
+                    print(f"  ⚠️  Could not delete stray {entry}: {exc}", file=sys.stderr)
+            continue
+
+        try:
+            dest_dir = quarantine_root / timestamp
+            dest_dir.mkdir(parents=True, exist_ok=True)
+            dest = dest_dir / name
+            shutil.move(str(entry), str(dest))
+            actions.append(f"moved stray '{entry}' -> '{dest}'")
+            if verbose:
+                print(f"  🧹  Quarantined stray: {entry} -> {dest}", file=sys.stderr)
+        except Exception as move_exc:
+            # Fall back to deletion if the stray cannot be moved.
+            try:
+                if entry.is_dir():
+                    shutil.rmtree(entry)
+                else:
+                    entry.unlink()
+                actions.append(
+                    f"deleted stray '{entry}' (move failed: {move_exc})"
+                )
+                if verbose:
+                    print(
+                        f"  🧹  Deleted stray (move failed): {entry}",
+                        file=sys.stderr,
+                    )
+            except Exception as del_exc:  # pragma: no cover - filesystem dependent
+                actions.append(f"FAILED to remove stray '{entry}': {del_exc}")
+                if verbose:
+                    print(f"  ⚠️  Could not remove stray {entry}: {del_exc}", file=sys.stderr)
+
+    return actions
+
+
 def _create_lab_scaffolding(labs_base_path: Path) -> Path:
-    """Create the tiered lab directory scaffolding under *labs_base_path*."""
+    """Create the tiered lab directory skeleton under *labs_base_path*.
+
+    Only the directory structure (and ``.gitkeep`` placeholders so empty
+    directories survive) is created.  No boilerplate ``README.md`` is written
+    — a "Labs for this tier will be generated here." stub used to linger
+    whenever lab generation was skipped or failed, and was indistinguishable
+    from real output.  The Lab Developer writes the tier README when it
+    actually generates labs.
+    """
     base = labs_base_path
     base.mkdir(parents=True, exist_ok=True)
 
-    for tier_dir_name, tier_label in _TIERS:
+    for tier_dir_name, _tier_label in _TIERS:
         tier_path = base / tier_dir_name
         starter_path = tier_path / "starter"
         solution_path = tier_path / "solution"
@@ -884,16 +1018,6 @@ def _create_lab_scaffolding(labs_base_path: Path) -> Path:
 
         (starter_path / ".gitkeep").touch(exist_ok=True)
         (solution_path / ".gitkeep").touch(exist_ok=True)
-
-        tier_readme = tier_path / "README.md"
-        if not tier_readme.exists():
-            tier_readme.write_text(
-                f"# {tier_label}\n\n"
-                f"Labs for this tier will be generated here.\n\n"
-                f"- **starter/** — Scaffolded exercises with TODO markers.\n"
-                f"- **solution/** — Fully-commented reference implementations.\n",
-                encoding="utf-8",
-            )
 
     return base
 
@@ -931,6 +1055,7 @@ class CrewResult:
         presentation_error: str | None = None,
         aborted: bool = False,
         abort_reason: str | None = None,
+        stray_actions: list[str] | None = None,
     ) -> None:
         self.syllabus_path = syllabus_path
         self.labs_base_path = labs_base_path
@@ -955,6 +1080,7 @@ class CrewResult:
         self.presentation_error = presentation_error
         self.aborted = aborted
         self.abort_reason = abort_reason
+        self.stray_actions = list(stray_actions or [])
 
     @property
     def all_succeeded(self) -> bool:
@@ -1544,8 +1670,12 @@ def run_syllabus_crew(
                 syllabus_error = _annotate_iter_exhaustion(
                     str(exc), "CURRICULUM_ARCHITECT", parent_error=exc
                 )
+            # Do NOT write an error stub into syllabus/<course>.md — that made
+            # a failed run indistinguishable from a real syllabus and (because
+            # ``syllabus_raw`` stays empty) silently skipped every downstream
+            # stage.  Record the failure in an internal error file instead.
             write_file(
-                syllabus_path,
+                run_dir / "_syllabus_error.md",
                 f"# {course_name} — Syllabus Generation Failed\n\n**Error:** {syllabus_error}\n",
                 force=True,
             )
@@ -1675,6 +1805,7 @@ def run_syllabus_crew(
             try:
                 if theory_instructor is None:
                     theory_instructor = get_theory_instructor(verbose=verbose)
+                    _bind_run_id(theory_instructor, _active_run_id)
 
                 tier_theory_task = create_theory_task(
                     agent=theory_instructor,
@@ -1816,6 +1947,7 @@ def run_syllabus_crew(
             try:
                 if lp_coordinator is None:
                     lp_coordinator = get_instructional_coordinator(verbose=verbose)
+                    _bind_run_id(lp_coordinator, _active_run_id)
 
                 lp_task = create_lesson_plan_task(
                     agent=lp_coordinator,
@@ -1895,6 +2027,7 @@ def run_syllabus_crew(
             try:
                 if pres_designer is None:
                     pres_designer = get_presentation_designer(verbose=verbose)
+                    _bind_run_id(pres_designer, _active_run_id)
 
                 pres_task = create_presentation_task(
                     agent=pres_designer,
@@ -1973,6 +2106,7 @@ def run_syllabus_crew(
                 lab_dev = lab_dev_agent
             else:
                 lab_dev = get_lab_developer(verbose=verbose)
+            _bind_run_id(lab_dev, _active_run_id)
         except RuntimeError as exc:
             labs_error = str(exc)
 
@@ -2203,6 +2337,7 @@ def run_syllabus_crew(
         # retry attempt by the factory passed to _kickoff_with_retry, so a
         # single transient LLM failure doesn't abort the whole review.
         qa_reviewer = get_qa_reviewer(verbose=verbose)
+        _bind_run_id(qa_reviewer, _active_run_id)
 
         # CRITICAL: All agents that may receive delegation MUST be in
         # the SAME Crew array.  The QA Reviewer delegates lab fixes to
@@ -2285,13 +2420,20 @@ def run_syllabus_crew(
             if verbose:
                 print(f"  ❌  QA Review failed: {exc}", file=sys.stderr)
 
-    # ── 5. Post-run sanity: scan output/ for stray generated files ─────
+    # ── 5. Post-run enforcement: quarantine stray files in output/ ─────
     # NOTE: ``_active_run_id`` (not the raw ``run_id`` argument) is the
     # resolved identifier — it is always populated, whereas the argument is
     # None for fresh runs that let the crew generate its own run id.
-    strays = _scan_for_stray_generated_files(run_id=_active_run_id, verbose=verbose)
-    if strays and verbose:
-        print(f"\n  🔍  Stray file scan: {len(strays)} issue(s) found above.", file=sys.stderr)
+    stray_actions = _quarantine_stray_generated_files(
+        run_id=_active_run_id, verbose=verbose
+    )
+    if stray_actions:
+        print(
+            f"\n  🧹  Forced correction: {len(stray_actions)} stray item(s) "
+            f"removed from output/ (quarantined under "
+            f"output/_stray/{_active_run_id}/, or deleted if the move failed).",
+            file=sys.stderr,
+        )
 
     # ── 6. Generate output manifest ────────────────────────────────────
     try:
@@ -2328,4 +2470,5 @@ def run_syllabus_crew(
         presentation_error=presentation_error,
         aborted=abort_guard.tripped,
         abort_reason=abort_guard.reason,
+        stray_actions=stray_actions,
     )
