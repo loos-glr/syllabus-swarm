@@ -12,12 +12,12 @@ student_pathway: "BOL"
 bpv_readiness: "pre-bpv"
 
 tech_stack:
-  primary_language: "HTML en Javascript"
+  primary_language: "Pseudocode voor differentiatie HTML, CSS & Javascript"
   framework: "N/A"
-  frontend: "HTML, CSS, Javascript"
+  frontend: "Figma en voor differentiatie HTML, CSS, Javascript"
   database: "N/A"
   version_control: "Lokaal met mappenstructuur op USB-stick"
-  editor: "Software om HTML en Javascript mee te verwerken"
+  editor: "Figma, alleen voor differentiatie vs code om html en css te schrijven"
   testing:
     framework: "Handmatig via peer-testing en testformulier"
     coverage_target: "N/A"
