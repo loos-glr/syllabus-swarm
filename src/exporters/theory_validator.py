@@ -113,6 +113,9 @@ def _validate_html(file_path: Path) -> ValidationResult:
       3. JavaScript syntax is valid (via Node.js --check).
       4. Common anti-patterns: missing try/catch, missing null checks on
          getElementById/querySelector.
+      5. CSS anti-patterns: absolute positioning + negative margin (label
+         overlap), dead BEM selectors, low-contrast text colours.
+      6. ``keydown`` listeners that do not skip form controls.
     """
     result = ValidationResult(file_path=file_path, format_type="html", passed=True)
 
@@ -196,10 +199,13 @@ def _validate_html(file_path: Path) -> ValidationResult:
             js_code,
         )
         for var_name in dom_queries:
-            # Check if there's an 'if (!var_name)' or 'if (var_name === null)'
-            # within the next 5 lines after the declaration.
+            # Treat the variable as checked if it appears in any guard:
+            #   if (!x) ...   if (!x || !y) ...   if (x) ...
+            #   if (x === null) ...   if (x !== null) ...
             null_check_pattern = re.compile(
-                rf"(?:if\s*\(\s*!{re.escape(var_name)}\s*\)|if\s*\(\s*{re.escape(var_name)}\s*===?\s*null\s*\))"
+                rf"(?:!\s*{re.escape(var_name)}\b"
+                rf"|\b{re.escape(var_name)}\s*(?:===?|!==?)\s*null\b"
+                rf"|if\s*\(\s*{re.escape(var_name)}\b)"
             )
             if not null_check_pattern.search(js_code):
                 result.issues.append(
@@ -239,16 +245,96 @@ def _validate_html(file_path: Path) -> ValidationResult:
             )
         )
         if uses_dom and not has_domcontentloaded and not script["in_head"]:
-            # Script is in body but uses DOM — check if it's at the very end
-            # (within last 200 chars of the file)
+            # Script is in <body> and uses DOM — make sure nothing but the
+            # document's own closing tags follow it (i.e. it really is last).
             script_pos = raw_html.find(js_code)
-            if script_pos >= 0 and script_pos < len(raw_html) - 500:
+            if script_pos >= 0:
+                trailing = raw_html[script_pos + len(js_code):]
+                trailing_clean = re.sub(
+                    r"</script\s*>|</body\s*>|</html\s*>",
+                    "",
+                    trailing,
+                    flags=re.IGNORECASE,
+                ).strip()
+                if trailing_clean:
+                    result.issues.append(
+                        ValidationIssue(
+                            "warning",
+                            "Script uses DOM APIs but may run before elements exist.  "
+                            "Either place <script> as the LAST element in <body> or "
+                            "wrap code in DOMContentLoaded listener.",
+                            line=script["start_line"],
+                        )
+                    )
+
+    # ── Check 5: CSS layout / selector anti-patterns ───────────────────
+    style_blocks = re.findall(
+        r"<style[^>]*>(.*?)</style>", raw_html, re.S | re.IGNORECASE
+    )
+    for block in style_blocks:
+        for rule_match in re.finditer(r"([^{}]+)\{([^{}]*)\}", block):
+            selector = rule_match.group(1).strip()
+            rule_body = re.sub(r"\s+", "", rule_match.group(2)).lower()
+
+            # (a) absolute positioning + negative left margin (classic overlap bug)
+            if "position:absolute" in rule_body and re.search(
+                r"margin-left:-\d", rule_body
+            ):
                 result.issues.append(
                     ValidationIssue(
                         "warning",
-                        "Script uses DOM APIs but may run before elements exist.  "
-                        "Either place <script> as the LAST element in <body> or "
-                        "wrap code in DOMContentLoaded listener.",
+                        f"CSS rule '{selector[:60]}' positions an element absolutely "
+                        "and then shifts it with a negative 'margin-left' — this "
+                        "commonly makes labels overlap their neighbours.  Prefer "
+                        "'left: 50%' + 'transform: translateX(-50%)'.",
+                    )
+                )
+
+            # (d) BEM modifier used as an element (missing leading '.')
+            for tok in re.findall(r"(?<![.\w:-])([a-z0-9]+--[a-z0-9-]+)\b", selector):
+                result.issues.append(
+                    ValidationIssue(
+                        "warning",
+                        f"Selector '{selector[:60]}' contains '{tok}', which looks "
+                        "like a BEM modifier class written without a leading '.'.  "
+                        "This selector will never match anything.",
+                    )
+                )
+
+            # (c) low-contrast text colours on light backgrounds (skip dark
+            # backgrounds and disabled controls, where contrast is exempt).
+            has_dark_bg = re.search(r"background:#[0-2]", rule_body) is not None
+            is_disabled = ":disabled" in selector.lower()
+            if not has_dark_bg and not is_disabled:
+                for colour_match in re.finditer(
+                    r"color:\s*(#[0-9a-fA-F]{3,6})", rule_match.group(2)
+                ):
+                    hexval = colour_match.group(1).lower()
+                    if hexval in ("#999", "#999999", "#777", "#777777"):
+                        result.issues.append(
+                            ValidationIssue(
+                                "warning",
+                                f"Low-contrast text colour '{hexval}' in rule "
+                                f"'{selector[:60]}' fails WCAG AA for normal-sized "
+                                "text.  Use a darker grey such as #555 or #6b7280.",
+                            )
+                        )
+
+    # ── Check 6: keydown listener that does not skip form controls ─────
+    for script in extractor.scripts:
+        js_code = script["content"]
+        if re.search(r"addEventListener\(\s*['\"]keydown['\"]", js_code):
+            guarded = (
+                "tagName" in js_code
+                and re.search(r"SELECT|INPUT|TEXTAREA", js_code) is not None
+            )
+            if not guarded:
+                result.issues.append(
+                    ValidationIssue(
+                        "warning",
+                        "A 'keydown' listener is registered but does not skip form "
+                        "controls — arrow keys can hijack <select>/<input> elements.  "
+                        "Ignore events where e.target.tagName is SELECT/INPUT/TEXTAREA.",
                         line=script["start_line"],
                     )
                 )

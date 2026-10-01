@@ -107,7 +107,13 @@ def create_theory_instructor(
         "Mermaid Live).  Include explanatory prose between diagrams.\n\n"
         "Every artifact must be self-contained, runnable/viewable with zero "
         "external dependencies beyond a browser or terminal, and include "
-        "clear learning objectives at the top."
+        "clear learning objectives at the top.\n\n"
+        "For every interactive artifact you must also guarantee: correct, "
+        "non-overlapping layout (especially progress bars/steppers), full "
+        "keyboard accessibility (real buttons, focus states, form-safe arrow "
+        "keys), WCAG-AA colour contrast, clear ARIA labels on icon-only "
+        "controls, and — when the material language is Dutch — Dutch "
+        "student-facing text with a Dutch gloss for English domain terms."
     )
 
     backstory = (
@@ -145,7 +151,10 @@ def create_theory_instructor(
         "syllabus, identify the core concept in each tier, and immediately "
         "know which format will make it click.  Your artifacts are the bridge "
         "between 'I've heard of this' and 'I can build this' — the crucial "
-        "step that happens *before* the lab work begins."
+        "step that happens *before* the lab work begins.  You are also a "
+        "stickler for the details that make an artifact genuinely usable: "
+        "no overlapping labels, full keyboard operability, AA colour "
+        "contrast, and honest ARIA so every student can use what you build."
     )
 
     export_tool = OutputExportTool(force=True)
