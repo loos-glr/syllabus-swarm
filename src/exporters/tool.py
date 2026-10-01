@@ -59,9 +59,13 @@ from crewai.tools import BaseTool
 from pydantic import BaseModel, Field
 
 from src.exporters.file_writer import (
+    CANONICAL_TIERS,
     FileWriteError,
+    canonical_tier,
     write_directory_tree,
     write_file,
+    write_lesson_plan,
+    write_presentation,
     write_remotion_manifest,
     write_syllabus,
 )
@@ -128,6 +132,7 @@ class OutputExportToolArgs(BaseModel):
         ...,
         description=(
             "The operation to perform. One of: write-syllabus, write-labs, "
+            "write-theory, write-lesson-plan, write-presentation, "
             "generate-manifest, export-course-graph."
         ),
     )
@@ -136,6 +141,14 @@ class OutputExportToolArgs(BaseModel):
     tier: str = Field(
         default="",
         description="Lab tier directory name, e.g. 'tier1_foundations'.",
+    )
+    module_name: str = Field(
+        default="",
+        description=(
+            "Module/tier identifier for lesson-plan and presentation writes.  "
+            "Accepts the canonical tier directory name (e.g. 'tier1_foundations') "
+            "or its human label (e.g. 'Tier 1 — Foundations')."
+        ),
     )
     run_id: str = Field(
         default="",
@@ -183,23 +196,27 @@ class OutputExportTool(BaseTool):
     --------
     ``write-syllabus``
         Write a single syllabus Markdown file.
-        Required kwargs: ``course_name``, ``content``.
+        Required kwargs: ``course_name``, ``content``, ``run_id``.
 
     ``write-labs``
         Write a batch of lab files from a directory-tree mapping.
-        Required kwargs: ``course_name``, ``tier``, ``files``.
+        Required kwargs: ``course_name``, ``run_id``, ``tier``, ``files``.
+
+    ``write-theory``
+        Write theory artifact(s) for one tier.
+        Required kwargs: ``run_id``, ``tier``, ``files``.
+
+    ``write-lesson-plan``
+        Write a lesson plan for one module/tier.
+        Required kwargs: ``course_name``, ``module_name``, ``content``, ``run_id``.
+
+    ``write-presentation``
+        Write a Marp presentation for one module/tier.
+        Required kwargs: ``course_name``, ``module_name``, ``content``, ``run_id``.
 
     ``generate-manifest``
         Scan ``output/`` and regenerate ``output/README.md``.
         Optional kwargs: ``course_name``.
-
-    ``write-file``
-        Low-level: write arbitrary content to a single file.
-        Required kwargs: ``path``, ``content``.
-
-    ``write-directory-tree``
-        Low-level: write a batch of files from a ``{rel_path: content}`` dict.
-        Required kwargs: ``base_path``, ``files``.
 
     Parameters
     ----------
@@ -207,22 +224,87 @@ class OutputExportTool(BaseTool):
         When ``True``, existing files are silently overwritten.  When
         ``False`` (the default), a ``FileWriteError`` is raised for
         pre-existing files.
+    run_id : str
+        The active per-run identifier.  When bound (via :meth:`bind_run_id`),
+        every run-scoped write must target this exact run directory — a
+        mismatched or invented ``run_id`` is rejected instead of silently
+        creating a stray directory.
     """
 
     name: str = "output_export_tool"
     description: str = (
-        "Writes syllabus, labs, and manifest files to the output/ directory "
-        "tree.  Call it with a required 'command' keyword argument plus "
-        "command-specific keyword arguments.  Supported commands: "
-        "write-syllabus, write-labs, generate-manifest, export-course-graph, "
-        "write-remotion-manifest.  "
-        "Example: command='write-syllabus', course_name='ML 101', "
-        "content='# Syllabus\\n...'"
+        "Writes syllabus, labs, theory, lesson-plan, and presentation files "
+        "to the output/ directory tree.  Call it with a required 'command' "
+        "keyword argument plus command-specific keyword arguments.  Supported "
+        "commands: write-syllabus, write-labs, write-theory, write-lesson-plan, "
+        "write-presentation, generate-manifest, export-course-graph.  "
+        "All path decisions are enforced by the tool — you only supply content "
+        "(and 'tier'/'module_name' when relevant).  Example: "
+        "command='write-lesson-plan', course_name='ML 101', "
+        "module_name='tier1_foundations', content='# Lesson plan\\n...'"
     )
 
     args_schema: type[BaseModel] = OutputExportToolArgs
 
     force: bool = False
+
+    # Active run identifier.  Empty means "not bound" (CLI mode); the caller
+    # must then pass an explicit ``run_id``.  When bound (inside a crew run)
+    # the tool enforces that every run-scoped write targets this run.
+    run_id: str = ""
+
+    # ------------------------------------------------------------------
+    # Run-id binding + enforcement helpers
+    # ------------------------------------------------------------------
+
+    def bind_run_id(self, run_id: str) -> OutputExportTool:
+        """Bind this tool instance to the active run identifier.
+
+        Called by the orchestrator immediately after an agent is created so
+        that delegated/derived writes can be validated against the *real*
+        run directory instead of whatever the LLM invents.
+        """
+        self.run_id = str(run_id or "").strip()
+        return self
+
+    def _resolve_run_id(self, params: dict[str, Any]) -> str:
+        """Return the effective run_id, enforcing it when bound.
+
+        Raises
+        ------
+        ValueError
+            When no run_id is supplied (or the supplied one mismatches the
+            bound run_id).
+        """
+        requested = str(params.get("run_id", "") or "").strip()
+        if self.run_id:
+            if requested and requested != self.run_id:
+                raise ValueError(
+                    f"run_id mismatch: this run is '{self.run_id}' but the "
+                    f"tool was asked to write to '{requested}'.  Writes are "
+                    f"confined to the active run directory; pass the run_id "
+                    f"from the task context verbatim."
+                )
+            return self.run_id
+        if not requested:
+            raise ValueError(
+                "Missing required parameter: 'run_id'.  Every generated "
+                "artefact must live under output/<run_id>/ — pass the run_id "
+                "from the task context (e.g. run_id='2026-09-29_053658_WebXR')."
+            )
+        return requested
+
+    @staticmethod
+    def _require_tier(params: dict[str, Any]) -> str:
+        """Return the canonical tier dir name, or raise ``ValueError``."""
+        raw = str(params.get("tier", "") or "")
+        canonical = canonical_tier(raw)
+        if canonical is None:
+            raise ValueError(
+                f"Invalid 'tier' {raw!r}.  Must resolve to one of: "
+                f"{', '.join(CANONICAL_TIERS)}."
+            )
+        return canonical
 
     # ------------------------------------------------------------------
     # Path safety guard — ensures no file is written outside output/
@@ -280,8 +362,9 @@ class OutputExportTool(BaseTool):
             f"{reason}  Call output_export_tool with a 'command' keyword "
             "argument, e.g. command='write-labs', course_name='...', "
             "tier='tier1_foundations', run_id='...', files={...}.  "
-            "Supported commands: write-syllabus, write-labs, "
-            "generate-manifest, export-course-graph, write-remotion-manifest."
+            "Supported commands: write-syllabus, write-labs, write-theory, "
+            "write-lesson-plan, write-presentation, generate-manifest, "
+            "export-course-graph."
         )
 
     def _run(self, **kwargs: Any) -> str:
@@ -322,19 +405,34 @@ class OutputExportTool(BaseTool):
                 return self._handle_write_syllabus(parsed)
             elif command == "write-labs":
                 return self._handle_write_labs(parsed)
+            elif command == "write-theory":
+                return self._handle_write_theory(parsed)
+            elif command == "write-lesson-plan":
+                return self._handle_write_lesson_plan(parsed)
+            elif command == "write-presentation":
+                return self._handle_write_presentation(parsed)
             elif command == "generate-manifest":
                 return self._handle_generate_manifest(parsed)
             elif command == "export-course-graph":
                 return self._handle_export_course_graph(parsed)
-            elif command == "write-file":
-                return self._handle_write_file(parsed)
-            elif command == "write-directory-tree":
-                return self._handle_write_directory_tree(parsed)
+            elif command in ("write-file", "write-directory-tree"):
+                # Hard enforcement: the low-level, path-arbitrary commands are
+                # deliberately NOT available to agents.  Allowing them let the
+                # LLM scatter artefacts (misplaced lesson plans, wrong run ids,
+                # non-canonical tier dirs) across the output tree.
+                return _err(
+                    f"The '{command}' command is not available to agents.  It "
+                    "permits arbitrary paths and is restricted to the CLI.  "
+                    "Use one of: write-syllabus, write-labs, write-theory, "
+                    "write-lesson-plan, write-presentation.  These commands "
+                    "enforce the canonical output layout automatically."
+                )
             else:
                 return _err(
                     f"Unknown command: '{command}'.  Supported commands: "
-                    "write-syllabus, write-labs, generate-manifest, "
-                    "export-course-graph."
+                    "write-syllabus, write-labs, write-theory, "
+                    "write-lesson-plan, write-presentation, "
+                    "generate-manifest, export-course-graph."
                 )
         except FileWriteError as exc:
             return _err(str(exc))
@@ -350,10 +448,10 @@ class OutputExportTool(BaseTool):
     def _handle_write_syllabus(self, params: dict[str, Any]) -> str:
         """Write a syllabus Markdown file.
 
-        When a ``run_id`` is provided, the syllabus is written to
-        ``output/<run_id>/syllabus/<course>.md`` (per-run isolation).
-        Without a ``run_id``, it falls back to the global
-        ``output/syllabus/<course>.md`` path.
+        The ``run_id`` is required (or inherited from the bound run id) so the
+        syllabus is always written to ``output/<run_id>/syllabus/<course>.md``.
+        During a crew run the global ``output/syllabus/`` fallback is never
+        used — that fallback is what scattered syllabi outside the run tree.
         """
         course_name = str(params.get("course_name", ""))
         if not course_name:
@@ -363,16 +461,21 @@ class OutputExportTool(BaseTool):
         if not content:
             return _err("Missing required parameter: 'content'.")
 
-        run_id = str(params.get("run_id", "") or "")
-        path = write_syllabus(course_name, content, force=self.force, run_id=run_id or None)
+        try:
+            run_id = self._resolve_run_id(params)
+        except ValueError as exc:
+            return _err(str(exc))
+
+        path = write_syllabus(course_name, content, force=self.force, run_id=run_id)
         return _ok(f"Syllabus written for '{course_name}'.", path)
 
     def _handle_write_labs(self, params: dict[str, Any]) -> str:
         """Write a batch of lab files from a files-dict mapping.
 
-        Files are written to ``output/<run_id>/labs/<tier>/``
-        (per-run isolation).  The ``run_id`` parameter is **required**
-        — without it there is no per-run directory and the call is rejected.
+        Files are written to ``output/<run_id>/labs/<canonical_tier>/``
+        (per-run isolation).  The ``run_id`` is required (or inherited from the
+        bound run id) and the ``tier`` must resolve to a canonical tier
+        directory name — anything else is rejected rather than written.
 
         The ``course_name`` is sanitised into a safe directory name.
         """
@@ -380,37 +483,38 @@ class OutputExportTool(BaseTool):
         if not course_name:
             return _err("Missing required parameter: 'course_name'.")
 
-        tier = str(params.get("tier", "tier1_foundations"))
-        run_id = str(params.get("run_id", "") or "")
-        if not run_id:
-            return _err(
-                "Missing required parameter: 'run_id'.  "
-                "The 'write-labs' command requires a run_id to place files "
-                "in the correct per-run output directory "
-                "(e.g. run_id='2026-09-02_163321_Immersive_Design')."
-            )
+        try:
+            run_id = self._resolve_run_id(params)
+            tier = self._require_tier(params)
+        except ValueError as exc:
+            return _err(str(exc))
 
-        # ── Guard: warn if target run_id does not exist yet ─────────
+        # ── Guard: reject writes that would create a brand-new run dir ──
+        # When the tool is bound to an active run, the target directory must
+        # already exist (the orchestrator creates it before agents run).  A
+        # missing directory therefore means the agent invented a wrong
+        # run_id; creating it silently was how stray run folders appeared.
         target_run_dir = _PROJECT_ROOT / "output" / run_id
-        if not target_run_dir.exists() and _has_other_runs():
-            # The agent is creating a brand-new output directory while
-            # other runs exist — likely a delegated agent inventing its
-            # own run_id instead of using the one from context.
-            import sys as _sys
+        if not target_run_dir.exists():
+            if self.run_id:
+                return _err(
+                    f"Refusing to write: run directory 'output/{run_id}/' does "
+                    f"not exist.  Writes are confined to the active run — do "
+                    f"not invent a run_id; use the one from the task context."
+                )
+            if _has_other_runs():
+                # CLI mode (no bound run_id) — warn but allow.
+                import sys as _sys
 
-            print(
-                f"\n{'!' * 60}\n"
-                f"  ⚠️  WARNING: write-labs is creating a NEW output directory\n"
-                f"      run_id:  {run_id}\n"
-                f"      tier:    {tier}\n"
-                f"      course:  {course_name}\n"
-                f"\n"
-                f"  If this is a delegated agent fixing files during QA review,\n"
-                f"  it may be writing to the WRONG directory.  The correct\n"
-                f"  run_id should match the existing output directory.\n"
-                f"{'!' * 60}\n",
-                file=_sys.stderr,
-            )
+                print(
+                    f"\n{'!' * 60}\n"
+                    f"  ⚠️  WARNING: write-labs is creating a NEW output directory\n"
+                    f"      run_id:  {run_id}\n"
+                    f"      tier:    {tier}\n"
+                    f"      course:  {course_name}\n"
+                    f"{'!' * 60}\n",
+                    file=_sys.stderr,
+                )
 
         files_raw = params.get("files")
         if not files_raw:
@@ -438,22 +542,22 @@ class OutputExportTool(BaseTool):
 
         files_dict: dict[str, Any] = files_raw
 
-        # ── Guard: validate every path is under starter/, solution/,
-        # or theory/ — catch agents writing files at tier root level.
+        # ── Guard: every path must live under starter/, solution/, or
+        # theory/.  Files placed at the tier root (or anywhere else) are
+        # rejected — this is what kept labs tidy.
         valid_prefixes = ("starter", "solution", "theory")
-        for rel_path in list(files_dict):
-            parts = str(rel_path).replace("\\", "/").split("/")
-            if parts and parts[0] not in valid_prefixes:
-                import sys as _sys2
-
-                print(
-                    f"\\n{'!' * 60}\\n"
-                    f"  ⚠️  WARNING: Lab file path '{rel_path}' is at tier root level.\\n"
-                    f"     Lab files MUST be under starter/, solution/, or theory/.\\n"
-                    f"     Example: 'starter/lab1.js' or 'theory/visualizer.html'\\n"
-                    f"{'!' * 60}\\n",
-                    file=_sys2.stderr,
-                )
+        invalid_paths = [
+            str(rel_path)
+            for rel_path in files_dict
+            if str(rel_path).replace("\\", "/").split("/")[0] not in valid_prefixes
+        ]
+        if invalid_paths:
+            return _err(
+                "Invalid lab file path(s): "
+                + ", ".join(repr(p) for p in invalid_paths)
+                + ".  Every lab file MUST be under starter/, solution/, or "
+                "theory/ (e.g. 'starter/lab1.js')."
+            )
 
         base = _PROJECT_ROOT / "output" / run_id / "labs" / tier
 
@@ -462,6 +566,127 @@ class OutputExportTool(BaseTool):
             f"Wrote {len(written)} lab file(s) for '{course_name}' under tier '{tier}'.",
             str(base),
         )
+
+    @staticmethod
+    def _unwrap_content(content: Any) -> Any:
+        """Unwrap a JSON-encoded *string* content value (CrewAI quirk)."""
+        if isinstance(content, str):
+            try:
+                parsed = json.loads(content)
+                if isinstance(parsed, str):
+                    return parsed
+            except (json.JSONDecodeError, TypeError):
+                pass
+        return content
+
+    @staticmethod
+    def _validate_rel_paths(files_dict: dict[str, Any]) -> str | None:
+        """Return an error message when any relative path is unsafe."""
+        for rel in files_dict:
+            posix = str(rel).replace("\\", "/")
+            if not posix or posix.startswith("/") or ".." in posix.split("/"):
+                return f"Unsafe relative path: {rel!r}."
+        return None
+
+    def _handle_write_theory(self, params: dict[str, Any]) -> str:
+        """Write theory artifact(s) for a single canonical tier.
+
+        Files are written to ``output/<run_id>/labs/<canonical_tier>/theory/``.
+        The ``run_id`` and ``tier`` are both validated (and the tier is
+        normalised to its canonical directory name).
+        """
+        try:
+            run_id = self._resolve_run_id(params)
+            tier = self._require_tier(params)
+        except ValueError as exc:
+            return _err(str(exc))
+
+        files_raw = params.get("files")
+        if not files_raw:
+            return _err(
+                "Missing or invalid 'files' parameter.  "
+                "Expected a dict of {relative_path: content}."
+            )
+        if isinstance(files_raw, str):
+            try:
+                files_raw = json.loads(files_raw)
+            except (json.JSONDecodeError, TypeError):
+                return _err(
+                    "Invalid 'files' parameter: could not parse JSON string.  "
+                    "Expected a JSON object mapping relative paths to content."
+                )
+        if not isinstance(files_raw, dict):
+            return _err(
+                "Missing or invalid 'files' parameter.  "
+                "Expected a dict of {relative_path: content}."
+            )
+
+        files_dict: dict[str, Any] = files_raw
+        path_error = self._validate_rel_paths(files_dict)
+        if path_error:
+            return _err(path_error)
+
+        base = _PROJECT_ROOT / "output" / run_id / "labs" / tier / "theory"
+        written = write_directory_tree(base, files_dict, force=self.force)
+        return _ok(
+            f"Wrote {len(written)} theory file(s) for tier '{tier}'.",
+            str(base),
+        )
+
+    def _handle_write_lesson_plan(self, params: dict[str, Any]) -> str:
+        """Write a lesson plan for one module/tier.
+
+        Destination: ``output/<run_id>/lesson_plans/<module>/lesson_plan.md``.
+        The ``module_name`` is normalised to a canonical tier directory name
+        when it identifies one; otherwise it is sanitised as a plain module
+        slug.
+        """
+        course_name = str(params.get("course_name", ""))
+        if not course_name:
+            return _err("Missing required parameter: 'course_name'.")
+
+        content = self._unwrap_content(params.get("content", ""))
+        if not content:
+            return _err("Missing required parameter: 'content'.")
+
+        try:
+            run_id = self._resolve_run_id(params)
+        except ValueError as exc:
+            return _err(str(exc))
+
+        module_raw = str(params.get("module_name", "") or params.get("module", "") or "module")
+        module = canonical_tier(module_raw) or module_raw
+
+        path = write_lesson_plan(
+            course_name, module, content, force=self.force, run_id=run_id
+        )
+        return _ok(f"Lesson plan written for module '{module}'.", path)
+
+    def _handle_write_presentation(self, params: dict[str, Any]) -> str:
+        """Write a Marp presentation for one module/tier.
+
+        Destination: ``output/<run_id>/presentations/<module>/presentation.md``.
+        """
+        course_name = str(params.get("course_name", ""))
+        if not course_name:
+            return _err("Missing required parameter: 'course_name'.")
+
+        content = self._unwrap_content(params.get("content", ""))
+        if not content:
+            return _err("Missing required parameter: 'content'.")
+
+        try:
+            run_id = self._resolve_run_id(params)
+        except ValueError as exc:
+            return _err(str(exc))
+
+        module_raw = str(params.get("module_name", "") or params.get("module", "") or "module")
+        module = canonical_tier(module_raw) or module_raw
+
+        path = write_presentation(
+            course_name, module, content, force=self.force, run_id=run_id
+        )
+        return _ok(f"Presentation written for module '{module}'.", path)
 
     def _handle_generate_manifest(self, params: dict[str, Any] | None = None) -> str:
         """Scan output/ and regenerate output/README.md."""
@@ -740,6 +965,15 @@ def build_cli_parser() -> argparse.ArgumentParser:
         dest="content_file",
         help="Path to a file containing the syllabus content.",
     )
+    ws.add_argument(
+        "--run-id",
+        default="",
+        dest="run_id",
+        help=(
+            "Per-run output directory (e.g. '2026-08-23_120000_course').  "
+            "Required so the syllabus is written under output/<run_id>/."
+        ),
+    )
 
     # ── write-labs ──────────────────────────────────────────────────
     wl = sub.add_parser(
@@ -781,6 +1015,12 @@ def build_cli_parser() -> argparse.ArgumentParser:
             "Directory containing lab files to write.  The directory "
             "tree is mirrored under the target path."
         ),
+    )
+    wl.add_argument(
+        "--run-id",
+        default="",
+        dest="run_id",
+        help="Per-run output directory (required; e.g. '2026-08-23_120000_course').",
     )
 
     # ── generate-manifest ───────────────────────────────────────────
@@ -863,6 +1103,74 @@ def build_cli_parser() -> argparse.ArgumentParser:
         default="",
         dest="run_id",
         help="Optional run ID directory (e.g. '2026-08-23_120000_course').",
+    )
+
+    # ── write-theory ────────────────────────────────────────────────
+    wt = sub.add_parser(
+        "write-theory",
+        help="Write theory artifact(s) for a canonical tier.",
+        description=(
+            "Write theory artifact file(s) under "
+            "``output/<run_id>/labs/<tier>/theory/``.  The tier must be a "
+            "canonical tier directory name (or its human label)."
+        ),
+    )
+    wt.add_argument("--run-id", required=True, dest="run_id", help="Per-run output directory.")
+    wt.add_argument("--tier", "-t", required=True, help="Canonical tier directory name.")
+    wt.add_argument(
+        "--files",
+        default="{}",
+        help="JSON object mapping relative file paths to their content.",
+    )
+
+    # ── write-lesson-plan ───────────────────────────────────────────
+    wlp = sub.add_parser(
+        "write-lesson-plan",
+        help="Write a lesson plan for one module/tier.",
+        description=(
+            "Write a lesson plan under "
+            "``output/<run_id>/lesson_plans/<module>/lesson_plan.md``."
+        ),
+    )
+    wlp.add_argument("--course", "-c", required=True, dest="course_name", help="Course title.")
+    wlp.add_argument("--run-id", required=True, dest="run_id", help="Per-run output directory.")
+    wlp.add_argument(
+        "--module",
+        required=True,
+        dest="module_name",
+        help="Module/tier name (canonical tier dir name or human label).",
+    )
+    wlp.add_argument("--content", default="", help="Lesson plan content as a raw string.")
+    wlp.add_argument(
+        "--content-file",
+        default=None,
+        dest="content_file",
+        help="Path to a file containing the lesson plan content.",
+    )
+
+    # ── write-presentation ──────────────────────────────────────────
+    wp = sub.add_parser(
+        "write-presentation",
+        help="Write a Marp presentation for one module/tier.",
+        description=(
+            "Write a presentation under "
+            "``output/<run_id>/presentations/<module>/presentation.md``."
+        ),
+    )
+    wp.add_argument("--course", "-c", required=True, dest="course_name", help="Course title.")
+    wp.add_argument("--run-id", required=True, dest="run_id", help="Per-run output directory.")
+    wp.add_argument(
+        "--module",
+        required=True,
+        dest="module_name",
+        help="Module/tier name (canonical tier dir name or human label).",
+    )
+    wp.add_argument("--content", default="", help="Presentation content as a raw string.")
+    wp.add_argument(
+        "--content-file",
+        default=None,
+        dest="content_file",
+        help="Path to a file containing the presentation content.",
     )
 
     # ── write-file (low-level) ──────────────────────────────────────
@@ -994,7 +1302,11 @@ def main(argv: list[str] | None = None) -> None:
     if command == "write-syllabus":
         content = _read_content(args.content, getattr(args, "content_file", None))
         result_str = tool._handle_write_syllabus(
-            {"course_name": args.course_name, "content": content}
+            {
+                "course_name": args.course_name,
+                "content": content,
+                "run_id": args.run_id,
+            }
         )
 
     elif command == "write-labs":
@@ -1010,9 +1322,41 @@ def main(argv: list[str] | None = None) -> None:
                 {
                     "course_name": args.course_name,
                     "tier": args.tier,
+                    "run_id": args.run_id,
                     "files": files_dict,
                 }
             )
+
+    elif command == "write-theory":
+        result_str = tool._handle_write_theory(
+            {
+                "tier": args.tier,
+                "run_id": args.run_id,
+                "files": json.loads(args.files),
+            }
+        )
+
+    elif command == "write-lesson-plan":
+        content = _read_content(args.content, getattr(args, "content_file", None))
+        result_str = tool._handle_write_lesson_plan(
+            {
+                "course_name": args.course_name,
+                "module_name": args.module_name,
+                "run_id": args.run_id,
+                "content": content,
+            }
+        )
+
+    elif command == "write-presentation":
+        content = _read_content(args.content, getattr(args, "content_file", None))
+        result_str = tool._handle_write_presentation(
+            {
+                "course_name": args.course_name,
+                "module_name": args.module_name,
+                "run_id": args.run_id,
+                "content": content,
+            }
+        )
 
     elif command == "generate-manifest":
         result_str = tool._handle_generate_manifest({"course_name": args.course_name})

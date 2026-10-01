@@ -260,31 +260,31 @@ class TestRunDispatch:
     def _make_tool(self) -> OutputExportTool:
         return OutputExportTool(force=True)
 
-    def test_dispatches_write_directory_tree_with_json_files(self) -> None:
-        """_run dispatches 'write-directory-tree' and handles JSON string files."""
+    def test_write_directory_tree_is_rejected_for_agents(self) -> None:
+        """_run refuses the path-arbitrary 'write-directory-tree' command."""
         tool = self._make_tool()
-        base = str(self._out / "dispatched")
         result = tool._run(
             command="write-directory-tree",
-            base_path=base,
-            files=json.dumps({"page.html": "<h1>Dispatched</h1>"}),
+            base_path=str(self._out / "dispatched"),
+            files=json.dumps({"page.html": "<h1>nope</h1>"}),
         )
         parsed = json.loads(result)
-        assert parsed["status"] == "ok", f"Expected ok, got: {parsed}"
-        assert (self._out / "dispatched" / "page.html").read_text() == "<h1>Dispatched</h1>"
+        assert parsed["status"] == "error"
+        assert "not available to agents" in parsed["message"].lower()
+        assert not (self._out / "dispatched").exists()
 
-    def test_dispatches_write_file_with_json_content(self) -> None:
-        """_run dispatches 'write-file' and handles JSON-encoded content."""
+    def test_write_file_is_rejected_for_agents(self) -> None:
+        """_run refuses the path-arbitrary 'write-file' command."""
         tool = self._make_tool()
-        dest = str(self._out / "dispatched_file.txt")
         result = tool._run(
             command="write-file",
-            path=dest,
-            content=json.dumps("Dispatched content"),
+            path=str(self._out / "dispatched_file.txt"),
+            content="nope",
         )
         parsed = json.loads(result)
-        assert parsed["status"] == "ok", f"Expected ok, got: {parsed}"
-        assert (self._out / "dispatched_file.txt").read_text() == "Dispatched content"
+        assert parsed["status"] == "error"
+        assert "not available to agents" in parsed["message"].lower()
+        assert not (self._out / "dispatched_file.txt").exists()
 
     def test_unknown_command_returns_error(self) -> None:
         """An unknown command returns an error."""
@@ -293,3 +293,149 @@ class TestRunDispatch:
         parsed = json.loads(result)
         assert parsed["status"] == "error"
         assert "unknown command" in parsed["message"].lower()
+
+
+# ===================================================================
+# Run-scoped commands + run_id binding / canonical tier enforcement
+# ===================================================================
+
+
+class TestRunScopedCommands:
+    """write-theory / write-lesson-plan / write-presentation enforcement."""
+
+    @pytest.fixture(autouse=True)
+    def _patch_root(self, tmp_path: Path) -> None:
+        import src.exporters.file_writer as fw
+        import src.exporters.tool as t
+
+        self._original_fw_root = fw._PROJECT_ROOT
+        self._original_tool_root = t._PROJECT_ROOT
+        fw._PROJECT_ROOT = tmp_path.resolve()
+        t._PROJECT_ROOT = tmp_path.resolve()
+        self._tmp = tmp_path
+        self._out = tmp_path / "output"
+        self._out.mkdir()
+        fw.OUTPUT_PATHS = fw.OutputPathConfig(root=tmp_path.resolve())
+        yield
+        fw.OUTPUT_PATHS = fw.OutputPathConfig(root=self._original_fw_root)
+        fw._PROJECT_ROOT = self._original_fw_root
+        t._PROJECT_ROOT = self._original_tool_root
+
+    def _make_run(self, run_id: str = "2026-09-29_053658_WebXR") -> str:
+        (self._out / run_id).mkdir(parents=True, exist_ok=True)
+        return run_id
+
+    def test_write_theory_requires_run_id(self) -> None:
+        """write-theory without a run_id is rejected."""
+        tool = OutputExportTool(force=True)
+        result = tool._run(
+            command="write-theory",
+            tier="tier1_foundations",
+            files={"a.html": "<p>x</p>"},
+        )
+        parsed = json.loads(result)
+        assert parsed["status"] == "error"
+        assert "run_id" in parsed["message"].lower()
+
+    def test_write_theory_normalises_tier_alias(self) -> None:
+        """A separator-variant tier name is written to the canonical dir."""
+        run_id = self._make_run()
+        tool = OutputExportTool(force=True)
+        result = tool._run(
+            command="write-theory",
+            run_id=run_id,
+            tier="tier_1_foundations",
+            files={"a.html": "<p>x</p>"},
+        )
+        parsed = json.loads(result)
+        assert parsed["status"] == "ok", parsed
+        assert (
+            self._out / run_id / "labs" / "tier1_foundations" / "theory" / "a.html"
+        ).exists()
+
+    def test_write_theory_rejects_unknown_tier(self) -> None:
+        """A tier that cannot be resolved is rejected."""
+        run_id = self._make_run()
+        tool = OutputExportTool(force=True)
+        result = tool._run(
+            command="write-theory", run_id=run_id, tier="module1", files={"a.html": "x"}
+        )
+        parsed = json.loads(result)
+        assert parsed["status"] == "error"
+        assert "invalid 'tier'" in parsed["message"].lower()
+
+    def test_write_lesson_plan_canonical_path(self) -> None:
+        """A human tier label maps onto the canonical lesson-plan dir."""
+        run_id = self._make_run()
+        tool = OutputExportTool(force=True)
+        result = tool._run(
+            command="write-lesson-plan",
+            course_name="WebXR",
+            module_name="Tier 1 — Foundations",
+            run_id=run_id,
+            content="# Lesplan",
+        )
+        parsed = json.loads(result)
+        assert parsed["status"] == "ok", parsed
+        assert (
+            self._out / run_id / "lesson_plans" / "tier1_foundations" / "lesson_plan.md"
+        ).exists()
+
+    def test_write_presentation_canonical_path(self) -> None:
+        """Presentations land under output/<run_id>/presentations/<tier>/."""
+        run_id = self._make_run()
+        tool = OutputExportTool(force=True)
+        result = tool._run(
+            command="write-presentation",
+            course_name="WebXR",
+            module_name="tier2_application",
+            run_id=run_id,
+            content="---\nmarp: true\n---\n# Deck",
+        )
+        parsed = json.loads(result)
+        assert parsed["status"] == "ok", parsed
+        assert (
+            self._out / run_id / "presentations" / "tier2_application" / "presentation.md"
+        ).exists()
+
+    def test_run_id_binding_rejects_mismatch(self) -> None:
+        """A bound tool refuses a mismatched (invented) run_id."""
+        active = self._make_run("2026-09-29_000000_Active")
+        tool = OutputExportTool(force=True).bind_run_id(active)
+        result = tool._run(
+            command="write-theory",
+            run_id="202-09-28_214410_Typo",
+            tier="tier1_foundations",
+            files={"a.html": "x"},
+        )
+        parsed = json.loads(result)
+        assert parsed["status"] == "error"
+        assert "mismatch" in parsed["message"].lower()
+
+    def test_bound_tool_refuses_missing_run_dir(self) -> None:
+        """A bound tool refuses to create a brand-new run directory."""
+        tool = OutputExportTool(force=True).bind_run_id("2026-09-29_000000_Missing")
+        result = tool._run(
+            command="write-labs",
+            course_name="WebXR",
+            tier="tier1_foundations",
+            files={"starter/lab1.html": "<p>x</p>"},
+        )
+        parsed = json.loads(result)
+        assert parsed["status"] == "error"
+        assert "refusing" in parsed["message"].lower()
+
+    def test_write_labs_rejects_invalid_prefix(self) -> None:
+        """Lab files outside starter/solution/theory are rejected."""
+        run_id = self._make_run()
+        tool = OutputExportTool(force=True)
+        result = tool._run(
+            command="write-labs",
+            course_name="WebXR",
+            run_id=run_id,
+            tier="tier1_foundations",
+            files={"lab1.html": "<p>x</p>"},
+        )
+        parsed = json.loads(result)
+        assert parsed["status"] == "error"
+        assert "starter/" in parsed["message"]
